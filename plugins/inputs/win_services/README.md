@@ -1,7 +1,7 @@
 # Telegraf Plugin: win_services
 Input plugin to report Windows services info.
 
-It requires that Telegraf must be running under the administrator privileges.
+Telegraf must be running under administrator privileges.
 ### Configuration:
 
 ```toml
@@ -25,7 +25,7 @@ The `state` field can have the following values:
 - 3 - stop pending
 - 4 - running
 - 5 - continue pending
-- 6 - pause pending 
+- 6 - pause pending
 - 7 - paused
 
 The `startup_mode` field can have the following values:
@@ -50,7 +50,7 @@ The `startup_mode` field can have the following values:
 ### TICK Scripts
 
 A sample TICK script for a notification about a not running service.
-It sends a notification whenever any service changes its state to be not _running_ and when it changes that state back to _running_. 
+It sends a notification whenever any service changes its state to be not _running_ and when it changes that state back to _running_.
 The notification is sent via an HTTP POST call.
 
 ```
