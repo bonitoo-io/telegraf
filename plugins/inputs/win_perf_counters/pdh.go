@@ -449,8 +449,7 @@ func UTF16PtrToString(s *uint16) string {
 	if s == nil {
 		return ""
 	}
-
-	return syscall.UTF16ToString((*[20]uint16)(unsafe.Pointer(s))[:])
+	return syscall.UTF16ToString((*[1 << 29]uint16)(unsafe.Pointer(s))[:])
 }
 
 func PdhFormatError(msgId uint32) string {
