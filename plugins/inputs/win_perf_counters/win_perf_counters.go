@@ -27,7 +27,6 @@ var sampleConfig = `
 
   [[inputs.win_perf_counters.object]]
 	# Processor usage, alternative to native, reports on a per core.
-    Computer = "localhost"
     ObjectName = "Processor"
     Instances = ["*"]
     Counters = [
@@ -43,7 +42,6 @@ var sampleConfig = `
 
   [[inputs.win_perf_counters.object]]
 	# Disk times and queues
-    Computer = "localhost"
     ObjectName = "LogicalDisk"
     Instances = ["*"]
     Counters = [
@@ -53,7 +51,6 @@ var sampleConfig = `
     Measurement = "win_disk"
 
   [[inputs.win_perf_counters.object]]
-    Computer = "localhost"
     ObjectName = "System"
     Counters = ["Context Switches/sec","System Calls/sec"]
     Instances = ["------"]
@@ -62,7 +59,6 @@ var sampleConfig = `
   [[inputs.win_perf_counters.object]]
     # Example query where the Instance portion must be removed to get data back,
 	# such as from the Memory object.
-    Computer = "localhost"
     ObjectName = "Memory"
     Counters = [
       "Available Bytes", "Cache Faults/sec", "Demand Zero Faults/sec",
