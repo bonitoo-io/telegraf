@@ -354,6 +354,7 @@ func TestWinPerfcountersConfigGet7(t *testing.T) {
 	var counters = make([]string, 3)
 	var perfobjects = make([]perfobject, 1)
 
+	computer := "localhost"
 	objectname := "Processor Information"
 	instances[0] = "_Total"
 	counters[0] = "% Processor Time"
@@ -363,6 +364,7 @@ func TestWinPerfcountersConfigGet7(t *testing.T) {
 	var measurement = "test"
 
 	PerfObject := perfobject{
+		computer,
 		objectname,
 		counters,
 		instances,
