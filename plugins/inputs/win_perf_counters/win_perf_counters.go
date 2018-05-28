@@ -77,6 +77,7 @@ type Win_PerfCounters struct {
 	PrintValid bool
 	//deprecated: determined dynamically
 	PreVistaSupport         bool
+	UsePerfCounterTime      bool
 	Object                  []perfobject
 	CountersRefreshInterval internal.Duration
 
@@ -129,8 +130,8 @@ func extractObjectInstanceCounterFromQuery(query string) (computer string, objec
 	if objectInstanceParts == nil || len(objectInstanceParts[0]) != 3 {
 		object = pathParts[0][1]
 	} else {
-		object = objectInstanceParts[0][2]
-		instance = objectInstanceParts[0][3]
+		object = objectInstanceParts[0][1]
+		instance = objectInstanceParts[0][2]
 	}
 	return
 }
@@ -257,89 +258,31 @@ func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 	}
 
 	type InstanceGrouping struct {
-		name       string
+		counter    string
 		instance   string
 		objectname string
+		computer   string
 	}
 
 	var collectFields = make(map[InstanceGrouping]map[string]interface{})
 
-	err = m.query.CollectData()
-	if err != nil {
-		return err
+	var timestamp time.Time
+	if m.UsePerfCounterTime {
+		timestamp, err = m.query.CollectDataWithTime()
+		if err != nil {
+			return err
+		}
+	} else {
+		timestamp = time.Now()
+		err = m.query.CollectData()
+		if err != nil {
+			return err
+		}
 	}
+
 	// For iterate over the known metrics and get the samples.
 	for _, metric := range m.counters {
 		// collect
-//<<<<<<< HEAD
-//		var ret uint32
-//		var timestamp time.Time
-//
-//		if m.UsePerfCounterTime {
-//			ret, timestamp = PdhCollectQueryDataWithTime(metric.handle)
-//		} else {
-//			timestamp = time.Now()
-//			ret = PdhCollectQueryData(metric.handle)
-//		}
-//
-//		if ret == ERROR_SUCCESS {
-//			ret = PdhGetFormattedCounterArrayDouble(metric.counterHandle, &bufSize,
-//				&bufCount, &emptyBuf[0]) // uses null ptr here according to MSDN.
-//			if ret == PDH_MORE_DATA {
-//				filledBuf := make([]PDH_FMT_COUNTERVALUE_ITEM_DOUBLE, bufCount*size)
-//				if len(filledBuf) == 0 {
-//					continue
-//				}
-//				ret = PdhGetFormattedCounterArrayDouble(metric.counterHandle,
-//					&bufSize, &bufCount, &filledBuf[0])
-//				for i := 0; i < int(bufCount); i++ {
-//					c := filledBuf[i]
-//					var s string = UTF16PtrToString(c.SzName)
-//
-//					var add bool
-//
-//					if metric.include_total {
-//						// If IncludeTotal is set, include all.
-//						add = true
-//					} else if metric.instance == "*" && !strings.Contains(s, "_Total") {
-//						// Catch if set to * and that it is not a '*_Total*' instance.
-//						add = true
-//					} else if metric.instance == s {
-//						// Catch if we set it to total or some form of it
-//						add = true
-//					} else if strings.Contains(metric.instance, "#") && strings.HasPrefix(metric.instance, s) {
-//						// If you are using a multiple instance identifier such as "w3wp#1"
-//						// phd.dll returns only the first 2 characters of the identifier.
-//						add = true
-//						s = metric.instance
-//					} else if metric.instance == "------" {
-//						add = true
-//					}
-//
-//					if add {
-//						fields := make(map[string]interface{})
-//						tags := make(map[string]string)
-//						if s != "" {
-//							tags["instance"] = s
-//						}
-//
-//						if len(metric.computer) > 0 {
-//							tags["computer"] = metric.computer
-//						}
-//
-//						tags["objectname"] = metric.objectName
-//						fields[sanitizedChars.Replace(metric.counter)] =
-//							float32(c.FmtValue.DoubleValue)
-//
-//						measurement := sanitizedChars.Replace(metric.measurement)
-//						if measurement == "" {
-//							measurement = "win_perf_counters"
-//						}
-//
-//						acc.AddFields(measurement, fields, tags, timestamp)
-//					}
-//				}
-//=======
 		value, err := m.query.GetFormattedCounterValueDouble(metric.counterHandle)
 		if err == nil {
 			measurement := sanitizedChars.Replace(metric.measurement)
@@ -347,7 +290,7 @@ func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 				measurement = "win_perf_counters"
 			}
 
-			var instance = InstanceGrouping{measurement, metric.instance, metric.objectName}
+			var instance = InstanceGrouping{measurement, metric.instance, metric.objectName, metric.computer}
 			if collectFields[instance] == nil {
 				collectFields[instance] = make(map[string]interface{})
 			}
@@ -367,7 +310,10 @@ func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 		if len(instance.instance) > 0 {
 			tags["instance"] = instance.instance
 		}
-		acc.AddFields(instance.name, fields, tags)
+		if len(instance.computer) > 0 {
+			tags["computer"] = instance.computer
+		}
+		acc.AddFields(instance.counter, fields, tags, timestamp)
 	}
 
 	return nil

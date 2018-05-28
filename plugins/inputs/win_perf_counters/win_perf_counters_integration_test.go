@@ -10,6 +10,7 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"os"
 	"strings"
 )
 
@@ -69,6 +70,11 @@ func TestWinPerformanceQueryImpl(t *testing.T) {
 
 	_, err = query.GetFormattedCounterValueDouble(hCounter)
 	require.NoError(t, err)
+
+	now := time.Now()
+	mtime, err := query.CollectDataWithTime()
+	require.NoError(t, err)
+	assert.True(t, mtime.Sub(now) < time.Second)
 
 	counterPath = "\\Process(*)\\% Processor Time"
 	paths, err := query.ExpandWildCardPath(counterPath)
@@ -354,7 +360,6 @@ func TestWinPerfcountersConfigGet7(t *testing.T) {
 	var counters = make([]string, 3)
 	var perfobjects = make([]perfobject, 1)
 
-	computer := "localhost"
 	objectname := "Processor Information"
 	instances[0] = "_Total"
 	counters[0] = "% Processor Time"
@@ -364,7 +369,7 @@ func TestWinPerfcountersConfigGet7(t *testing.T) {
 	var measurement = "test"
 
 	PerfObject := perfobject{
-		computer,
+		"",
 		objectname,
 		counters,
 		instances,
@@ -392,6 +397,52 @@ func TestWinPerfcountersConfigGet7(t *testing.T) {
 	} else if len(m.counters) > 2 {
 		var errorstring1 = "Too many results returned from the counterPath: " +
 			string(len(m.counters))
+		err2 := errors.New(errorstring1)
+		require.NoError(t, err2)
+	}
+}
+
+func TestWinPerfcountersConfigGet8(t *testing.T) {
+
+	var instances = make([]string, 1)
+	var counters = make([]string, 1)
+	var perfobjects = make([]perfobject, 1)
+
+	computer, err := os.Hostname()
+	require.NoError(t, err)
+	objectname := "Processor Information"
+	instances[0] = "_Total"
+	counters[0] = "% Processor Time"
+
+	var measurement = "test"
+
+	PerfObject := perfobject{
+		Computer:      computer,
+		ObjectName:    objectname,
+		Instances:     instances,
+		Counters:      counters,
+		Measurement:   measurement,
+		WarnOnMissing: false,
+		FailOnMissing: true,
+		IncludeTotal:  false,
+	}
+
+	perfobjects[0] = PerfObject
+
+	m := Win_PerfCounters{PrintValid: false, Object: perfobjects, query: &PerformanceQueryImpl{}}
+	m.query.Open()
+
+	err = m.ParseConfig()
+	require.NoError(t, err)
+
+	if len(m.counters) == 1 {
+		require.NoError(t, nil)
+	} else if len(m.counters) == 0 {
+		var errorstring1 = "No results returned from the query: " + string(len(m.counters))
+		err2 := errors.New(errorstring1)
+		require.NoError(t, err2)
+	} else if len(m.counters) > 1 {
+		var errorstring1 = "Too many results returned from the query: " + string(len(m.counters))
 		err2 := errors.New(errorstring1)
 		require.NoError(t, err2)
 	}
