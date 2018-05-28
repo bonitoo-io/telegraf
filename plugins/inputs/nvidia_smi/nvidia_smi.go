@@ -36,7 +36,7 @@ var (
 // NvidiaSMI holds the methods for this plugin
 type NvidiaSMI struct {
 	BinPath string
-	Timeout time.Duration
+	Timeout internal.Duration
 
 	metrics string
 }
@@ -81,7 +81,7 @@ func init() {
 	inputs.Add("nvidia_smi", func() telegraf.Input {
 		return &NvidiaSMI{
 			BinPath: "/usr/bin/nvidia-smi",
-			Timeout: 5 * time.Second,
+			Timeout: internal.Duration{Duration: 5 * time.Second},
 			metrics: metrics,
 		}
 	})
@@ -90,7 +90,7 @@ func init() {
 func (smi *NvidiaSMI) pollSMI() (string, error) {
 	// Construct and execute metrics query
 	opts := []string{"--format=noheader,nounits,csv", fmt.Sprintf("--query-gpu=%s", smi.metrics)}
-	ret, err := internal.CombinedOutputTimeout(exec.Command(smi.BinPath, opts...), smi.Timeout)
+	ret, err := internal.CombinedOutputTimeout(exec.Command(smi.BinPath, opts...), smi.Timeout.Duration)
 	if err != nil {
 		return "", err
 	}
@@ -125,15 +125,20 @@ func parseLine(line string) (map[string]string, map[string]interface{}, error) {
 	// Make sure there are as many metrics in the line as there were queried.
 	if len(met) == len(metricNames) {
 		for i, m := range metricNames {
+			col := strings.TrimSpace(met[i])
 
 			// First handle the tags
 			if m[1] == "tag" {
-				tags[m[0]] = strings.TrimSpace(met[i])
+				tags[m[0]] = col
+				continue
+			}
+
+			if strings.Contains(col, "[Not Supported]") {
 				continue
 			}
 
 			// Then parse the integers out of the fields
-			out, err := strconv.ParseInt(strings.TrimSpace(met[i]), 10, 64)
+			out, err := strconv.ParseInt(col, 10, 64)
 			if err != nil {
 				return tags, fields, err
 			}
