@@ -282,23 +282,28 @@ func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 	// For iterate over the known metrics and get the samples.
 	for _, metric := range m.counters {
 		// collect
+		log.Printf("D! Gathering values from: %s", metric.counterPath)
+		counterName := sanitizedChars.Replace(metric.counter)
+		measurement := sanitizedChars.Replace(metric.measurement)
+		if measurement == "" {
+			measurement = "win_perf_counters"
+		}
 		if m.UseWildcardsExpansion {
 			value, err := m.query.GetFormattedCounterValueDouble(metric.counterHandle)
 			if err == nil {
-				measurement := sanitizedChars.Replace(metric.measurement)
-				if measurement == "" {
-					measurement = "win_perf_counters"
-				}
-
 				var instance = InstanceGrouping{measurement, metric.instance, metric.objectName}
 				if collectFields[instance] == nil {
 					collectFields[instance] = make(map[string]interface{})
 				}
-				collectFields[instance][sanitizedChars.Replace(metric.counter)] = float32(value)
+				collectFields[instance][counterName] = float32(value)
+				log.Printf("D! Got counter \\%s(%s)\\%s : %.2f, for measurement %s", metric.objectName, metric.instance, counterName, value, measurement)
 			} else {
 				//ignore invalid data from as some counters from process instances returns this sometimes
 				if phderr, ok := err.(*PdhError); ok && phderr.ErrorCode != PDH_INVALID_DATA && phderr.ErrorCode != PDH_CALC_NEGATIVE_VALUE {
 					return fmt.Errorf("error while getting value for counter %s: %v", metric.counterPath, err)
+				} else {
+					phderr := err.(*PdhError)
+					log.Printf("D! Got expected error: %x", phderr.ErrorCode)
 				}
 			}
 		} else {
@@ -325,17 +330,22 @@ func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 					}
 
 					if add {
-						measurement := sanitizedChars.Replace(metric.measurement)
-						if measurement == "" {
-							measurement = "win_perf_counters"
-						}
 						var instance = InstanceGrouping{measurement, cValue.InstanceName, metric.objectName}
 
 						if collectFields[instance] == nil {
 							collectFields[instance] = make(map[string]interface{})
 						}
-						collectFields[instance][sanitizedChars.Replace(metric.counter)] = float32(cValue.Value)
+						collectFields[instance][counterName] = float32(cValue.Value)
+						log.Printf("D! Got counter \\%s(%s)\\%s : %.2f, for measurement %s", metric.objectName, cValue.InstanceName, counterName, cValue.Value, measurement)
 					}
+				}
+			} else {
+				//ignore invalid data from as some counters from process instances returns this sometimes
+				if phderr, ok := err.(*PdhError); ok && phderr.ErrorCode != PDH_INVALID_DATA && phderr.ErrorCode != PDH_CALC_NEGATIVE_VALUE {
+					return fmt.Errorf("error while getting value for counter %s: %v", metric.counterPath, err)
+				} else {
+					phderr := err.(*PdhError)
+					log.Printf("D! Got expected error: %x", phderr.ErrorCode)
 				}
 			}
 		}
