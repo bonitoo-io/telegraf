@@ -243,8 +243,10 @@ func (m *Win_PerfCounters) ParseConfig() error {
 func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 	// Parse the config once
 	var err error
-
+	start := time.Now()
+	log.Printf("D! Gather started")
 	if m.lastRefreshed.IsZero() || (m.CountersRefreshInterval.Duration.Nanoseconds() > 0 && m.lastRefreshed.Add(m.CountersRefreshInterval.Duration).Before(time.Now())) {
+		log.Printf("D! Refreshing counters")
 		if m.counters != nil {
 			m.counters = m.counters[:0]
 		}
@@ -361,7 +363,8 @@ func (m *Win_PerfCounters) Gather(acc telegraf.Accumulator) error {
 		}
 		acc.AddFields(instance.name, fields, tags)
 	}
-
+	took := time.Now().Sub(start)
+	log.Printf("D! Gather finished, took %.3fms", float64(took.Nanoseconds())/1e6)
 	return nil
 }
 
