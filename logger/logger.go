@@ -70,11 +70,17 @@ func (t *telegrafLog) Write(b []byte) (n int, err error) {
 }
 
 func (t *telegrafLog) Close() error {
-	closer, isCloser := t.internalWriter.(io.Closer)
-	if !isCloser {
-		return errors.New("the underlying writer cannot be closed")
+	var stdErrWriter io.Writer
+	stdErrWriter = os.Stderr
+	// avoid closing stderr
+	if t.internalWriter != stdErrWriter {
+		closer, isCloser := t.internalWriter.(io.Closer)
+		if !isCloser {
+			return errors.New("the underlying writer cannot be closed")
+		}
+		return closer.Close()
 	}
-	return closer.Close()
+	return nil
 }
 
 // newTelegrafWriter returns a logging-wrapped writer.
@@ -94,7 +100,8 @@ type telegrafLogCreator struct {
 }
 
 func (t *telegrafLogCreator) CreateLogger(config LogConfig) (io.Writer, error) {
-	var writer io.Writer
+	var writer, defaultWriter io.Writer
+	defaultWriter = os.Stderr
 
 	switch config.LogTarget {
 	case LogTargetFile:
@@ -102,17 +109,17 @@ func (t *telegrafLogCreator) CreateLogger(config LogConfig) (io.Writer, error) {
 			var err error
 			if writer, err = rotate.NewFileWriter(config.Logfile, config.RotationInterval.Duration, config.RotationMaxSize.Size, config.RotationMaxArchives); err != nil {
 				log.Printf("E! Unable to open %s (%s), using stderr", config.Logfile, err)
-				writer = os.Stderr
+				writer = defaultWriter
 			}
 		} else {
 			log.Print("E! Empty logfile, using stderr")
-			writer = os.Stderr
+			writer = defaultWriter
 		}
 	case LogTargetStderr, "":
-		writer = os.Stderr
+		writer = defaultWriter
 	default:
 		log.Printf("E! Unsupported logtarget: %s, using stderr", config.LogTarget)
-		writer = os.Stderr
+		writer = defaultWriter
 	}
 
 	return newTelegrafWriter(writer), nil
@@ -130,6 +137,9 @@ func newLogWriter(config LogConfig) io.Writer {
 	if config.Quiet {
 		wlog.SetLevel(wlog.ERROR)
 	}
+	if !config.Debug && !config.Quiet {
+		wlog.SetLevel(wlog.INFO)
+	}
 	var logWriter io.Writer
 	if logCreator, ok := loggerRegistry[config.LogTarget]; ok {
 		logWriter, _ = logCreator.CreateLogger(config)
@@ -138,9 +148,9 @@ func newLogWriter(config LogConfig) io.Writer {
 		logWriter, _ = (&telegrafLogCreator{}).CreateLogger(config)
 	}
 
-	//if closer, isCloser := actualLogger.(io.Closer); isCloser {
-	//	closer.Close()
-	//}
+	if closer, isCloser := actualLogger.(io.Closer); isCloser {
+		closer.Close()
+	}
 	log.SetOutput(logWriter)
 	actualLogger = logWriter
 
