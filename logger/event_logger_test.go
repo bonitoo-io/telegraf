@@ -48,6 +48,8 @@ func TestEventLog(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
+	SetupLogging(LogConfig{})
+	log.Println("I! Info message")
 	prepareLogger(t)
 
 	config := LogConfig{
@@ -65,6 +67,8 @@ func TestEventLog(t *testing.T) {
 	assert.Contains(t, events, Event{Message: "Info message", Level: Info})
 	assert.Contains(t, events, Event{Message: "Warn message", Level: Warning})
 	assert.Contains(t, events, Event{Message: "Err message", Level: Error})
+	SetupLogging(LogConfig{})
+	log.Println("I! Info message")
 }
 
 func TestRestrictedEventLog(t *testing.T) {
