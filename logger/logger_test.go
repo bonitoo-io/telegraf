@@ -19,17 +19,14 @@ func TestWriteLogToFile(t *testing.T) {
 	assert.NoError(t, err)
 	defer func() {
 		if err := os.Remove(tmpfile.Name()); err != nil {
-			log.Printf("Error removing tmp file: %s", err.Error())
+			fmt.Printf("Error removing tmp file: %s", err.Error())
 		}
 	}()
 	config := createBasicLogConfig(tmpfile.Name())
-	//SetupLogging(config)
+	SetupLogging(config)
 	log.Printf("I! TEST")
 	log.Printf("D! TEST") // <- should be ignored
-	fmt.Printf("%v\n", config)
-	fmt.Printf("file: %s\n", tmpfile.Name())
 
-	//time.Sleep(time.Minute)
 	f, err := ioutil.ReadFile(tmpfile.Name())
 	require.True(t, len(f) > 20, "Too short file: %d", len(f))
 	assert.NoError(t, err)
