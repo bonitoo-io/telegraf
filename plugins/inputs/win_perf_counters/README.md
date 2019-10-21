@@ -19,7 +19,19 @@ as counters used when performance monitoring
  There are a lot of other good objects to monitor, if you know what to look for.
  This file is likely to be updated in the future with more examples for
  useful configurations for separate scenarios.
-
+ 
+ ### Schema
+ 
+ *Measurement name* is specified per performance object or `win_perf_counters` by default.
+ 
+ *Tags:*
+  - computer - computer name, if specified in the `Computers` parameter, otherwise omitted
+  - objectname - normalized name of the performance object
+  - instance - instance name, if performance object supports multiple instances, otherwise omitted
+  
+  *Fields* are counters of the performance object. The field name is normalized counter name. 
+   
+ 
 ### Plugin wide
 
 Plugin wide entries are underneath `[[inputs.win_perf_counters]]`.
@@ -92,6 +104,14 @@ This must follow before other plugin configurations,
 beneath the main win_perf_counters entry, `[[inputs.win_perf_counters]]`.
 
 Following this are 3 required key/value pairs and three optional parameters and their usage.
+#### Computers
+*Optional*
+
+Host names or IPs of computers to gather counters from. User, under which Telegraf runs, must be already authenticated to the remote computer(s). E.g. via Windows sharing `net use \\SQL-SERVER-01`.
+Skip, if gather only from localhost.
+Use either empty string `""`, localhost `"localhost"` or real computer name to gather counters also from localhost among other computers.
+
+Example:  `Computers = ["localhost", "SQL-SERVER-01", "SQL-SERVER-02", "SQL-SERVER-03"]`
 
 #### ObjectName
 **Required**
