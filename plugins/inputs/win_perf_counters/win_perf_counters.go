@@ -362,7 +362,7 @@ func (m *WinPerfCounters) ParseConfig() error {
 		for _, PerfObject := range m.Object {
 			computers := PerfObject.Computers
 			if len(computers) == 0 {
-				computers = append(computers, "")
+				computers = []string{""}
 			}
 			for _, computer := range computers {
 				computerName := ""
