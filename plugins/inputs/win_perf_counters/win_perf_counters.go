@@ -445,6 +445,7 @@ func (m *WinPerfCounters) Gather(acc telegraf.Accumulator) error {
 	var wg sync.WaitGroup
 	//iterate over computers
 	for _, hostCounterInfo := range m.hostCounters {
+		wg.Add(1)
 		go func(hostInfo *hostCountersInfo) {
 			m.Log.Debugf("gathering from %s", hostInfo.computer)
 			start := time.Now()
@@ -455,7 +456,6 @@ func (m *WinPerfCounters) Gather(acc telegraf.Accumulator) error {
 			}
 			wg.Done()
 		}(hostCounterInfo)
-		wg.Add(1)
 	}
 
 	wg.Wait()
