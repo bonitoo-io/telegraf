@@ -68,6 +68,7 @@ const sampleConfig = `
   ## - AzureDBResourceStats
   ## - AzureDBResourceGovernance
   ## - SqlRequests
+  ## - ServerProperties
   exclude_query = [ 'Schedulers' ]
 `
 
@@ -431,8 +432,9 @@ IF SERVERPROPERTY('EngineEdition') = 5  -- Azure SQL DB
 			NULL AS available_storage_mb,  -- Can we find out storage?
 			NULL as uptime
 	FROM	 sys.databases d   
-			JOIN sys.database_service_objectives slo    
-			ON d.database_id = slo.database_id
+		-- sys.databases.database_id may not match current DB_ID on Azure SQL DB
+		CROSS JOIN sys.database_service_objectives slo
+		WHERE d.name = DB_NAME() AND slo.database_id = DB_ID()
 
 ELSE
 BEGIN
@@ -1305,7 +1307,7 @@ const sqlAzureDBResourceGovernance string = `
 IF SERVERPROPERTY('EngineEdition') = 5  -- Is this Azure SQL DB?
 SELECT
   'sqlserver_db_resource_governance' AS [measurement],
-   @@servername AS [sql_instance],
+   REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
    DB_NAME() as [database_name],
    slo_name,
 	dtu_limit,
@@ -1344,7 +1346,7 @@ BEGIN
         IF SERVERPROPERTY('EngineEdition') = 8  -- Is this Azure SQL Managed Instance?
          SELECT
            'sqlserver_instance_resource_governance' AS [measurement],
-           @@SERVERNAME AS [sql_instance],
+           REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
            instance_cap_cpu,
            instance_max_log_rate,
            instance_max_worker_threads,
@@ -1367,7 +1369,7 @@ SELECT  blocking_session_id into #blockingSessions FROM sys.dm_exec_requests WHE
 create index ix_blockingSessions_1 on #blockingSessions (blocking_session_id)
 SELECT	
    'sqlserver_requests' AS [measurement],
-    @@servername AS [sql_instance],
+    REPLACE(@@SERVERNAME,'\',':') AS [sql_instance],
     DB_NAME() as [database_name],
 	r.session_id
 	, r.request_id
@@ -1406,8 +1408,8 @@ SELECT
 	, qt.objectid
 	, QUOTENAME(OBJECT_SCHEMA_NAME(qt.objectid,qt.dbid)) + '.' +  QUOTENAME(OBJECT_NAME(qt.objectid,qt.dbid)) as stmt_object_name
 	, DB_NAME(qt.dbid) stmt_db_name
-	, r.query_hash
-	, r.query_plan_hash
+	,CONVERT(varchar(20),[query_hash],1) as [query_hash]
+	,CONVERT(varchar(20),[query_plan_hash],1) as [query_plan_hash]
 	FROM	sys.dm_exec_requests r
 		LEFT OUTER JOIN sys.dm_exec_sessions s ON (s.session_id = r.session_id)
 		OUTER APPLY sys.dm_exec_sql_text(sql_handle) AS qt
