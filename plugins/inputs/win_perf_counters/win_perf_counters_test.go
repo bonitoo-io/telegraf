@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/influxdata/telegraf/internal"
+	"os"
 	"testing"
 	"time"
 
@@ -178,12 +179,17 @@ type FakePerformanceQueryCreator struct {
 }
 
 func (m FakePerformanceQueryCreator) NewPerformanceQuery(computer string) PerformanceQuery {
-	return m.fakeQueries[computer]
+	var ret PerformanceQuery
+	var ok bool
+	ret = nil
+	if ret, ok = m.fakeQueries[computer]; !ok {
+		panic(fmt.Errorf("query for %s not found", computer))
+	}
+	return ret
 }
 
 func createPerfObject(computer string, measurement string, object string, instances []string, counters []string, failOnMissing bool, includeTotal bool) []perfobject {
 	PerfObject := perfobject{
-		Computers:     []string{computer},
 		ObjectName:    object,
 		Instances:     instances,
 		Counters:      counters,
@@ -191,6 +197,9 @@ func createPerfObject(computer string, measurement string, object string, instan
 		WarnOnMissing: false,
 		FailOnMissing: failOnMissing,
 		IncludeTotal:  includeTotal,
+	}
+	if computer != "" {
+		PerfObject.Sources = []string{computer}
 	}
 	perfObjects := []perfobject{PerfObject}
 	return perfObjects
@@ -207,6 +216,18 @@ func createCounterMap(counterPaths []string, values []float64, status []uint32) 
 		}
 	}
 	return counters
+}
+
+var cachedHostname string
+
+func hostname() string {
+	if cachedHostname == "" {
+		var err error
+		if cachedHostname, err = os.Hostname(); err != nil {
+			cachedHostname = "localhost"
+		}
+	}
+	return cachedHostname
 }
 
 var counterPathsAndRes = map[string][]string{
@@ -275,7 +296,7 @@ func TestAddItemSimple(t *testing.T) {
 			},
 		},
 	}
-	err = m.AddItem(cps1[0], "", "O", "I", "c", "test", false)
+	err = m.AddItem(cps1[0], "localhost", "O", "I", "c", "test", false)
 	require.NoError(t, err)
 	counters, ok := m.hostCounters["localhost"]
 	assert.True(t, ok)
@@ -308,7 +329,7 @@ func TestAddItemInvalidCountPath(t *testing.T) {
 		},
 	}
 	require.NoError(t, err)
-	err = m.AddItem("\\O\\C", "", "O", "------", "C", "test", false)
+	err = m.AddItem("\\O\\C", "localhost", "O", "------", "C", "test", false)
 	require.Error(t, err)
 }
 
@@ -317,6 +338,7 @@ func TestParseConfigBasic(t *testing.T) {
 	perfObjects := createPerfObject("", "m", "O", []string{"I1", "I2"}, []string{"C1", "C2"}, false, false)
 	cps1 := []string{"\\O(I1)\\C1", "\\O(I1)\\C2", "\\O(I2)\\C1", "\\O(I2)\\C2"}
 	m := WinPerfCounters{
+		Sources:    []string{"localhost"},
 		Log:        testutil.Logger{},
 		PrintValid: false,
 		Object:     perfObjects,
@@ -351,10 +373,250 @@ func TestParseConfigBasic(t *testing.T) {
 	assert.Len(t, counters.counters, 4)
 }
 
-func TestParseConfigMultiComps1(t *testing.T) {
+func TestParseConfigMultiComps(t *testing.T) {
 	var err error
 	perfObjects := []perfobject{
-		createPerfObject("", "m", "O", []string{"I1", "I2"}, []string{"C1", "C2"}, false, false)[0],
+		createPerfObject("", "m", "O", []string{"I"}, []string{"C"}, false, false)[0],
+		createPerfObject("", "m", "O1", []string{"I1", "I2"}, []string{"C1", "C2"}, false, false)[0],
+		createPerfObject("", "m", "O2", []string{"I"}, []string{"C1", "C2", "C3"}, false, false)[0],
+	}
+	cps11 := []string{"\\O(I)\\C"}
+	cps12 := []string{"\\\\cmp1\\O(I)\\C"}
+	cps13 := []string{"\\\\cmp2\\O(I)\\C"}
+	cps21 := []string{"\\O1(I1)\\C1", "\\O1(I1)\\C2", "\\O1(I2)\\C1", "\\O1(I2)\\C2"}
+	cps22 := []string{"\\\\cmp1\\O1(I1)\\C1", "\\\\cmp1\\O1(I1)\\C2", "\\\\cmp1\\O1(I2)\\C1", "\\\\cmp1\\O1(I2)\\C2"}
+	cps23 := []string{"\\\\cmp2\\O1(I1)\\C1", "\\\\cmp2\\O1(I1)\\C2", "\\\\cmp2\\O1(I2)\\C1", "\\\\cmp2\\O1(I2)\\C2"}
+	cps31 := []string{"\\O2(I)\\C1", "\\O2(I)\\C2", "\\O2(I)\\C3"}
+	cps32 := []string{"\\\\cmp1\\O2(I)\\C1", "\\\\cmp1\\O2(I)\\C2", "\\\\cmp1\\O2(I)\\C3"}
+	cps33 := []string{"\\\\cmp2\\O2(I)\\C1", "\\\\cmp2\\O2(I)\\C2", "\\\\cmp2\\O2(I)\\C3"}
+	m := WinPerfCounters{
+		Sources:    []string{"localhost", "cmp1", "cmp2"},
+		Log:        testutil.Logger{},
+		PrintValid: false,
+		Object:     perfObjects,
+		queryCreator: &FakePerformanceQueryCreator{
+			fakeQueries: map[string]*FakePerformanceQuery{
+				"localhost": {
+					counters: createCounterMap(append(append(cps11, cps21...), cps31...),
+						[]float64{1.1, 1.1, 1.2, 2.1, 2.2, 1.1, 1.2, 1.3},
+						[]uint32{0, 0, 0, 0, 0, 0, 0, 0}),
+					expandPaths: map[string][]string{
+						cps11[0]: {cps11[0]},
+						cps21[0]: {cps21[0]},
+						cps21[1]: {cps21[1]},
+						cps21[2]: {cps21[2]},
+						cps21[3]: {cps21[3]},
+						cps31[0]: {cps31[0]},
+						cps31[1]: {cps31[1]},
+						cps31[2]: {cps31[2]},
+					},
+					vistaAndNewer: true,
+				},
+				"cmp1": {
+					counters: createCounterMap(append(append(cps12, cps22...), cps32...),
+						[]float64{1.1, 1.1, 1.2, 2.1, 2.2, 1.1, 1.2, 1.3},
+						[]uint32{0, 0, 0, 0, 0, 0, 0, 0}),
+					expandPaths: map[string][]string{
+						cps12[0]: {cps12[0]},
+						cps22[0]: {cps22[0]},
+						cps22[1]: {cps22[1]},
+						cps22[2]: {cps22[2]},
+						cps22[3]: {cps22[3]},
+						cps32[0]: {cps32[0]},
+						cps32[1]: {cps32[1]},
+						cps32[2]: {cps32[2]},
+					},
+					vistaAndNewer: true,
+				},
+				"cmp2": {
+					counters: createCounterMap(append(append(cps13, cps23...), cps33...),
+						[]float64{1.1, 1.1, 1.2, 2.1, 2.2, 1.1, 1.2, 1.3},
+						[]uint32{0, 0, 0, 0, 0, 0, 0, 0}),
+					expandPaths: map[string][]string{
+						cps13[0]: {cps13[0]},
+						cps23[0]: {cps23[0]},
+						cps23[1]: {cps23[1]},
+						cps23[2]: {cps23[2]},
+						cps23[3]: {cps23[3]},
+						cps33[0]: {cps33[0]},
+						cps33[1]: {cps33[1]},
+						cps33[2]: {cps33[2]},
+					},
+					vistaAndNewer: true,
+				},
+			},
+		},
+	}
+	require.NoError(t, err)
+	err = m.ParseConfig()
+	require.NoError(t, err)
+	assert.Len(t, m.hostCounters, 3)
+
+	counters, ok := m.hostCounters["localhost"]
+	assert.True(t, ok)
+	assert.Len(t, counters.counters, 8)
+	assert.True(t, counters.tag == hostname())
+	assert.True(t, counters.counters[0].computer == "localhost")
+	assert.True(t, counters.counters[0].objectName == "O")
+	assert.True(t, counters.counters[0].instance == "I")
+	assert.True(t, counters.counters[0].counter == "C")
+	assert.True(t, counters.counters[0].measurement == "m")
+	assert.True(t, !counters.counters[0].includeTotal)
+	assert.True(t, counters.counters[1].computer == "localhost")
+	assert.True(t, counters.counters[1].objectName == "O1")
+	assert.True(t, counters.counters[1].instance == "I1")
+	assert.True(t, counters.counters[1].counter == "C1")
+	assert.True(t, counters.counters[1].measurement == "m")
+	assert.True(t, !counters.counters[1].includeTotal)
+	assert.True(t, counters.counters[2].computer == "localhost")
+	assert.True(t, counters.counters[2].objectName == "O1")
+	assert.True(t, counters.counters[2].instance == "I2")
+	assert.True(t, counters.counters[2].counter == "C1")
+	assert.True(t, counters.counters[2].measurement == "m")
+	assert.True(t, !counters.counters[2].includeTotal)
+	assert.True(t, counters.counters[3].computer == "localhost")
+	assert.True(t, counters.counters[3].objectName == "O1")
+	assert.True(t, counters.counters[3].instance == "I1")
+	assert.True(t, counters.counters[3].counter == "C2")
+	assert.True(t, counters.counters[3].measurement == "m")
+	assert.True(t, !counters.counters[3].includeTotal)
+	assert.True(t, counters.counters[4].computer == "localhost")
+	assert.True(t, counters.counters[4].objectName == "O1")
+	assert.True(t, counters.counters[4].instance == "I2")
+	assert.True(t, counters.counters[4].counter == "C2")
+	assert.True(t, counters.counters[4].measurement == "m")
+	assert.True(t, !counters.counters[4].includeTotal)
+	assert.True(t, counters.counters[5].computer == "localhost")
+	assert.True(t, counters.counters[5].objectName == "O2")
+	assert.True(t, counters.counters[5].instance == "I")
+	assert.True(t, counters.counters[5].counter == "C1")
+	assert.True(t, counters.counters[5].measurement == "m")
+	assert.True(t, !counters.counters[5].includeTotal)
+	assert.True(t, counters.counters[6].computer == "localhost")
+	assert.True(t, counters.counters[6].objectName == "O2")
+	assert.True(t, counters.counters[6].instance == "I")
+	assert.True(t, counters.counters[6].counter == "C2")
+	assert.True(t, counters.counters[6].measurement == "m")
+	assert.True(t, !counters.counters[6].includeTotal)
+	assert.True(t, counters.counters[7].computer == "localhost")
+	assert.True(t, counters.counters[7].objectName == "O2")
+	assert.True(t, counters.counters[7].instance == "I")
+	assert.True(t, counters.counters[7].counter == "C3")
+	assert.True(t, counters.counters[7].measurement == "m")
+	assert.True(t, !counters.counters[7].includeTotal)
+
+	counters, ok = m.hostCounters["cmp1"]
+	assert.True(t, ok)
+	assert.Len(t, counters.counters, 8)
+	assert.True(t, counters.tag == "cmp1")
+	assert.True(t, counters.counters[0].computer == "cmp1")
+	assert.True(t, counters.counters[0].objectName == "O")
+	assert.True(t, counters.counters[0].instance == "I")
+	assert.True(t, counters.counters[0].counter == "C")
+	assert.True(t, counters.counters[0].measurement == "m")
+	assert.True(t, !counters.counters[0].includeTotal)
+	assert.True(t, counters.counters[1].computer == "cmp1")
+	assert.True(t, counters.counters[1].objectName == "O1")
+	assert.True(t, counters.counters[1].instance == "I1")
+	assert.True(t, counters.counters[1].counter == "C1")
+	assert.True(t, counters.counters[1].measurement == "m")
+	assert.True(t, !counters.counters[1].includeTotal)
+	assert.True(t, counters.counters[2].computer == "cmp1")
+	assert.True(t, counters.counters[2].objectName == "O1")
+	assert.True(t, counters.counters[2].instance == "I2")
+	assert.True(t, counters.counters[2].counter == "C1")
+	assert.True(t, counters.counters[2].measurement == "m")
+	assert.True(t, !counters.counters[2].includeTotal)
+	assert.True(t, counters.counters[3].computer == "cmp1")
+	assert.True(t, counters.counters[3].objectName == "O1")
+	assert.True(t, counters.counters[3].instance == "I1")
+	assert.True(t, counters.counters[3].counter == "C2")
+	assert.True(t, counters.counters[3].measurement == "m")
+	assert.True(t, !counters.counters[3].includeTotal)
+	assert.True(t, counters.counters[4].computer == "cmp1")
+	assert.True(t, counters.counters[4].objectName == "O1")
+	assert.True(t, counters.counters[4].instance == "I2")
+	assert.True(t, counters.counters[4].counter == "C2")
+	assert.True(t, counters.counters[4].measurement == "m")
+	assert.True(t, !counters.counters[4].includeTotal)
+	assert.True(t, counters.counters[5].computer == "cmp1")
+	assert.True(t, counters.counters[5].objectName == "O2")
+	assert.True(t, counters.counters[5].instance == "I")
+	assert.True(t, counters.counters[5].counter == "C1")
+	assert.True(t, counters.counters[5].measurement == "m")
+	assert.True(t, !counters.counters[5].includeTotal)
+	assert.True(t, counters.counters[6].computer == "cmp1")
+	assert.True(t, counters.counters[6].objectName == "O2")
+	assert.True(t, counters.counters[6].instance == "I")
+	assert.True(t, counters.counters[6].counter == "C2")
+	assert.True(t, counters.counters[6].measurement == "m")
+	assert.True(t, !counters.counters[6].includeTotal)
+	assert.True(t, counters.counters[7].computer == "cmp1")
+	assert.True(t, counters.counters[7].objectName == "O2")
+	assert.True(t, counters.counters[7].instance == "I")
+	assert.True(t, counters.counters[7].counter == "C3")
+	assert.True(t, counters.counters[7].measurement == "m")
+	assert.True(t, !counters.counters[7].includeTotal)
+
+	counters, ok = m.hostCounters["cmp2"]
+	assert.True(t, ok)
+	assert.Len(t, counters.counters, 8)
+	assert.True(t, counters.tag == "cmp2")
+	assert.True(t, counters.counters[0].computer == "cmp2")
+	assert.True(t, counters.counters[0].objectName == "O")
+	assert.True(t, counters.counters[0].instance == "I")
+	assert.True(t, counters.counters[0].counter == "C")
+	assert.True(t, counters.counters[0].measurement == "m")
+	assert.True(t, !counters.counters[0].includeTotal)
+	assert.True(t, counters.counters[1].computer == "cmp2")
+	assert.True(t, counters.counters[1].objectName == "O1")
+	assert.True(t, counters.counters[1].instance == "I1")
+	assert.True(t, counters.counters[1].counter == "C1")
+	assert.True(t, counters.counters[1].measurement == "m")
+	assert.True(t, !counters.counters[1].includeTotal)
+	assert.True(t, counters.counters[2].computer == "cmp2")
+	assert.True(t, counters.counters[2].objectName == "O1")
+	assert.True(t, counters.counters[2].instance == "I2")
+	assert.True(t, counters.counters[2].counter == "C1")
+	assert.True(t, counters.counters[2].measurement == "m")
+	assert.True(t, !counters.counters[2].includeTotal)
+	assert.True(t, counters.counters[3].computer == "cmp2")
+	assert.True(t, counters.counters[3].objectName == "O1")
+	assert.True(t, counters.counters[3].instance == "I1")
+	assert.True(t, counters.counters[3].counter == "C2")
+	assert.True(t, counters.counters[3].measurement == "m")
+	assert.True(t, !counters.counters[3].includeTotal)
+	assert.True(t, counters.counters[4].computer == "cmp2")
+	assert.True(t, counters.counters[4].objectName == "O1")
+	assert.True(t, counters.counters[4].instance == "I2")
+	assert.True(t, counters.counters[4].counter == "C2")
+	assert.True(t, counters.counters[4].measurement == "m")
+	assert.True(t, !counters.counters[4].includeTotal)
+	assert.True(t, counters.counters[5].computer == "cmp2")
+	assert.True(t, counters.counters[5].objectName == "O2")
+	assert.True(t, counters.counters[5].instance == "I")
+	assert.True(t, counters.counters[5].counter == "C1")
+	assert.True(t, counters.counters[5].measurement == "m")
+	assert.True(t, !counters.counters[5].includeTotal)
+	assert.True(t, counters.counters[6].computer == "cmp2")
+	assert.True(t, counters.counters[6].objectName == "O2")
+	assert.True(t, counters.counters[6].instance == "I")
+	assert.True(t, counters.counters[6].counter == "C2")
+	assert.True(t, counters.counters[6].measurement == "m")
+	assert.True(t, !counters.counters[6].includeTotal)
+	assert.True(t, counters.counters[7].computer == "cmp2")
+	assert.True(t, counters.counters[7].objectName == "O2")
+	assert.True(t, counters.counters[7].instance == "I")
+	assert.True(t, counters.counters[7].counter == "C3")
+	assert.True(t, counters.counters[7].measurement == "m")
+	assert.True(t, !counters.counters[7].includeTotal)
+
+}
+
+func TestParseConfigMultiCompsOverrideMultiplePerfObjects(t *testing.T) {
+	var err error
+	perfObjects := []perfobject{
+		createPerfObject("localhost", "m", "O", []string{"I1", "I2"}, []string{"C1", "C2"}, false, false)[0],
 		createPerfObject("cmp1", "m", "O1", []string{"I1", "I2"}, []string{"C1", "C2"}, false, false)[0],
 		createPerfObject("cmp2", "m", "O2", []string{"I1", "I2"}, []string{"C1", "C2"}, false, false)[0],
 	}
@@ -419,7 +681,7 @@ func TestParseConfigMultiComps1(t *testing.T) {
 	assert.True(t, counters.counters[0].counter == "C1")
 	assert.True(t, counters.counters[0].measurement == "m")
 	assert.True(t, !counters.counters[0].includeTotal)
-	assert.True(t, counters.counters[0].computer == "localhost")
+	assert.True(t, counters.counters[1].computer == "localhost")
 	assert.True(t, counters.counters[1].objectName == "O")
 	assert.True(t, counters.counters[1].instance == "I2")
 	assert.True(t, counters.counters[1].counter == "C1")
@@ -447,7 +709,7 @@ func TestParseConfigMultiComps1(t *testing.T) {
 	assert.True(t, counters.counters[0].counter == "C1")
 	assert.True(t, counters.counters[0].measurement == "m")
 	assert.True(t, !counters.counters[0].includeTotal)
-	assert.True(t, counters.counters[0].computer == "cmp1")
+	assert.True(t, counters.counters[1].computer == "cmp1")
 	assert.True(t, counters.counters[1].objectName == "O1")
 	assert.True(t, counters.counters[1].instance == "I2")
 	assert.True(t, counters.counters[1].counter == "C1")
@@ -475,7 +737,7 @@ func TestParseConfigMultiComps1(t *testing.T) {
 	assert.True(t, counters.counters[0].counter == "C1")
 	assert.True(t, counters.counters[0].measurement == "m")
 	assert.True(t, !counters.counters[0].includeTotal)
-	assert.True(t, counters.counters[0].computer == "cmp2")
+	assert.True(t, counters.counters[1].computer == "cmp2")
 	assert.True(t, counters.counters[1].objectName == "O2")
 	assert.True(t, counters.counters[1].instance == "I2")
 	assert.True(t, counters.counters[1].counter == "C1")
@@ -496,11 +758,11 @@ func TestParseConfigMultiComps1(t *testing.T) {
 
 }
 
-func TestParseConfigMultiComps2(t *testing.T) {
+func TestParseConfigMultiCompsOverrideOnePerfObject(t *testing.T) {
 	var err error
 
 	PerfObject := perfobject{
-		Computers:     []string{"", "cmp1", "cmp2"},
+		Sources:       []string{"cmp1", "cmp2"},
 		ObjectName:    "O",
 		Instances:     []string{"I1", "I2"},
 		Counters:      []string{"C1", "C2"},
@@ -509,47 +771,48 @@ func TestParseConfigMultiComps2(t *testing.T) {
 		FailOnMissing: false,
 		IncludeTotal:  false,
 	}
-	cps1 := []string{"\\O(I1)\\C1", "\\O(I1)\\C2", "\\O(I2)\\C1", "\\O(I2)\\C2"}
-	cps2 := []string{"\\\\cmp1\\O(I1)\\C1", "\\\\cmp1\\O(I1)\\C2", "\\\\cmp1\\O(I2)\\C1", "\\\\cmp1\\O(I2)\\C2"}
-	cps3 := []string{"\\\\cmp2\\O(I1)\\C1", "\\\\cmp2\\O(I1)\\C2", "\\\\cmp2\\O(I2)\\C1", "\\\\cmp2\\O(I2)\\C2"}
+	cps11 := []string{"\\\\cmp1\\O(I1)\\C1", "\\\\cmp1\\O(I1)\\C2", "\\\\cmp1\\O(I2)\\C1", "\\\\cmp1\\O(I2)\\C2"}
+	cps12 := []string{"\\\\cmp2\\O(I1)\\C1", "\\\\cmp2\\O(I1)\\C2", "\\\\cmp2\\O(I2)\\C1", "\\\\cmp2\\O(I2)\\C2"}
+	cps21 := []string{"\\O1(I)\\C"}
+	cps22 := []string{"\\\\cmp1\\O1(I)\\C"}
 	m := WinPerfCounters{
+		Sources:    []string{"localhost", "cmp1"},
 		Log:        testutil.Logger{},
 		PrintValid: false,
-		Object:     []perfobject{PerfObject},
+		Object:     []perfobject{PerfObject, createPerfObject("", "m", "O1", []string{"I"}, []string{"C"}, false, false)[0]},
 		queryCreator: &FakePerformanceQueryCreator{
-			fakeQueries: map[string]*FakePerformanceQuery{"localhost": {
-				counters: createCounterMap(cps1,
-					[]float64{1.1, 1.2, 1.3, 1.4},
-					[]uint32{0, 0, 0, 0}),
-				expandPaths: map[string][]string{
-					cps1[0]: {cps1[0]},
-					cps1[1]: {cps1[1]},
-					cps1[2]: {cps1[2]},
-					cps1[3]: {cps1[3]},
-				},
-				vistaAndNewer: true,
-			},
-				"cmp1": {
-					counters: createCounterMap(cps2,
-						[]float64{2.1, 2.2, 2.3, 2.4},
-						[]uint32{0, 0, 0, 0}),
+			fakeQueries: map[string]*FakePerformanceQuery{
+				"localhost": {
+					counters: createCounterMap(cps21,
+						[]float64{1.1},
+						[]uint32{0}),
 					expandPaths: map[string][]string{
-						cps2[0]: {cps2[0]},
-						cps2[1]: {cps2[1]},
-						cps2[2]: {cps2[2]},
-						cps2[3]: {cps2[3]},
+						cps21[0]: {cps21[0]},
+					},
+					vistaAndNewer: true,
+				},
+				"cmp1": {
+					counters: createCounterMap(append(cps11, cps22...),
+						[]float64{2.1, 2.1, 2.2, 2.3, 2.4},
+						[]uint32{0, 0, 0, 0, 0}),
+					expandPaths: map[string][]string{
+						cps11[0]: {cps11[0]},
+						cps11[1]: {cps11[1]},
+						cps11[2]: {cps11[2]},
+						cps11[3]: {cps11[3]},
+						cps22[0]: {cps22[0]},
 					},
 					vistaAndNewer: true,
 				},
 				"cmp2": {
-					counters: createCounterMap(cps3,
+					counters: createCounterMap(cps12,
 						[]float64{3.1, 3.2, 3.3, 3.4},
 						[]uint32{0, 0, 0, 0}),
 					expandPaths: map[string][]string{
-						cps3[0]: {cps3[0]},
-						cps3[1]: {cps3[1]},
-						cps3[2]: {cps3[2]},
-						cps3[3]: {cps3[3]},
+						cps12[0]: {cps12[0]},
+						cps12[1]: {cps12[1]},
+						cps12[2]: {cps12[2]},
+						cps12[3]: {cps12[3]},
 					},
 					vistaAndNewer: true,
 				},
@@ -563,35 +826,19 @@ func TestParseConfigMultiComps2(t *testing.T) {
 
 	counters, ok := m.hostCounters["localhost"]
 	assert.True(t, ok)
-	require.Len(t, counters.counters, 4)
+	require.Len(t, counters.counters, 1)
+	assert.True(t, counters.tag == hostname())
 	assert.True(t, counters.counters[0].computer == "localhost")
-	assert.True(t, counters.counters[0].objectName == "O")
-	assert.True(t, counters.counters[0].instance == "I1")
-	assert.True(t, counters.counters[0].counter == "C1")
+	assert.True(t, counters.counters[0].objectName == "O1")
+	assert.True(t, counters.counters[0].instance == "I")
+	assert.True(t, counters.counters[0].counter == "C")
 	assert.True(t, counters.counters[0].measurement == "m")
 	assert.True(t, !counters.counters[0].includeTotal)
-	assert.True(t, counters.counters[0].computer == "localhost")
-	assert.True(t, counters.counters[1].objectName == "O")
-	assert.True(t, counters.counters[1].instance == "I2")
-	assert.True(t, counters.counters[1].counter == "C1")
-	assert.True(t, counters.counters[1].measurement == "m")
-	assert.True(t, !counters.counters[1].includeTotal)
-	assert.True(t, counters.counters[2].computer == "localhost")
-	assert.True(t, counters.counters[2].objectName == "O")
-	assert.True(t, counters.counters[2].instance == "I1")
-	assert.True(t, counters.counters[2].counter == "C2")
-	assert.True(t, counters.counters[2].measurement == "m")
-	assert.True(t, !counters.counters[2].includeTotal)
-	assert.True(t, counters.counters[3].computer == "localhost")
-	assert.True(t, counters.counters[3].objectName == "O")
-	assert.True(t, counters.counters[3].instance == "I2")
-	assert.True(t, counters.counters[3].counter == "C2")
-	assert.True(t, counters.counters[3].measurement == "m")
-	assert.True(t, !counters.counters[3].includeTotal)
 
 	counters, ok = m.hostCounters["cmp1"]
 	assert.True(t, ok)
-	require.Len(t, counters.counters, 4)
+	require.Len(t, counters.counters, 5)
+	assert.True(t, counters.tag == "cmp1")
 	assert.True(t, counters.counters[0].computer == "cmp1")
 	assert.True(t, counters.counters[0].objectName == "O")
 	assert.True(t, counters.counters[0].instance == "I1")
@@ -616,17 +863,24 @@ func TestParseConfigMultiComps2(t *testing.T) {
 	assert.True(t, counters.counters[3].counter == "C2")
 	assert.True(t, counters.counters[3].measurement == "m")
 	assert.True(t, !counters.counters[3].includeTotal)
+	assert.True(t, counters.counters[4].computer == "cmp1")
+	assert.True(t, counters.counters[4].objectName == "O1")
+	assert.True(t, counters.counters[4].instance == "I")
+	assert.True(t, counters.counters[4].counter == "C")
+	assert.True(t, counters.counters[4].measurement == "m")
+	assert.True(t, !counters.counters[4].includeTotal)
 
 	counters, ok = m.hostCounters["cmp2"]
 	assert.True(t, ok)
 	require.Len(t, counters.counters, 4)
+	assert.True(t, counters.tag == "cmp2")
 	assert.True(t, counters.counters[0].computer == "cmp2")
 	assert.True(t, counters.counters[0].objectName == "O")
 	assert.True(t, counters.counters[0].instance == "I1")
 	assert.True(t, counters.counters[0].counter == "C1")
 	assert.True(t, counters.counters[0].measurement == "m")
 	assert.True(t, !counters.counters[0].includeTotal)
-	assert.True(t, counters.counters[0].computer == "cmp2")
+	assert.True(t, counters.counters[1].computer == "cmp2")
 	assert.True(t, counters.counters[1].objectName == "O")
 	assert.True(t, counters.counters[1].instance == "I2")
 	assert.True(t, counters.counters[1].counter == "C1")
@@ -676,12 +930,12 @@ func TestParseConfigLocalhost(t *testing.T) {
 	require.Len(t, hostCounters.counters, 1)
 	assert.Equal(t, "localhost", hostCounters.counters[0].computer)
 	assert.Equal(t, "localhost", hostCounters.computer, hostCounters.computer)
-	assert.Equal(t, "", hostCounters.computerTag)
+	assert.Equal(t, hostname(), hostCounters.tag)
 
 	err = m.cleanQueries()
 	require.NoError(t, err)
 
-	m.Object[0].Computers = []string{""}
+	m.Object[0].Sources = []string{""}
 
 	err = m.ParseConfig()
 	require.NoError(t, err)
@@ -691,7 +945,7 @@ func TestParseConfigLocalhost(t *testing.T) {
 	require.Len(t, hostCounters.counters, 1)
 	assert.Equal(t, "localhost", hostCounters.counters[0].computer)
 	assert.Equal(t, "localhost", hostCounters.computer, hostCounters.computer)
-	assert.Equal(t, "", hostCounters.computerTag)
+	assert.Equal(t, hostname(), hostCounters.tag)
 }
 
 func TestParseConfigNoInstance(t *testing.T) {
@@ -922,6 +1176,7 @@ func TestSimpleGather(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields1, tags1)
 
@@ -1027,6 +1282,7 @@ func TestSimpleGatherWithTimestamp(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields1, tags1)
 	assert.True(t, acc1.HasTimestamp(measurement, MetricTime))
@@ -1119,6 +1375,7 @@ func TestGatherInvalidDataIgnore(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields1, tags1)
 
@@ -1178,6 +1435,7 @@ func TestGatherRefreshingWithExpansion(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields1, tags1)
 
@@ -1188,6 +1446,7 @@ func TestGatherRefreshingWithExpansion(t *testing.T) {
 	tags2 := map[string]string{
 		"instance":   "I2",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields2, tags2)
 
@@ -1212,6 +1471,7 @@ func TestGatherRefreshingWithExpansion(t *testing.T) {
 	tags3 := map[string]string{
 		"instance":   "I3",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 
 	//test before elapsing CounterRefreshRate counters are not refreshed
@@ -1281,6 +1541,7 @@ func TestGatherRefreshingWithoutExpansion(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields1, tags1)
 
@@ -1291,6 +1552,7 @@ func TestGatherRefreshingWithoutExpansion(t *testing.T) {
 	tags2 := map[string]string{
 		"instance":   "I2",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields2, tags2)
 	//test finding new instance
@@ -1320,6 +1582,7 @@ func TestGatherRefreshingWithoutExpansion(t *testing.T) {
 	tags3 := map[string]string{
 		"instance":   "I3",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 
 	//test before elapsing CounterRefreshRate counters are not refreshed
@@ -1368,6 +1631,7 @@ func TestGatherRefreshingWithoutExpansion(t *testing.T) {
 	tags4 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	fields5 := map[string]interface{}{
 		"C1": float32(1.4),
@@ -1377,6 +1641,7 @@ func TestGatherRefreshingWithoutExpansion(t *testing.T) {
 	tags5 := map[string]string{
 		"instance":   "I2",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 
 	acc3.AssertContainsTaggedFields(t, measurement, fields4, tags4)
@@ -1421,6 +1686,7 @@ func TestGatherTotalNoExpansion(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields1, tags1)
 
@@ -1431,6 +1697,7 @@ func TestGatherTotalNoExpansion(t *testing.T) {
 	tags2 := map[string]string{
 		"instance":   "_Total",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc1.AssertContainsTaggedFields(t, measurement, fields2, tags2)
 
@@ -1520,6 +1787,7 @@ func TestGatherMultiComps(t *testing.T) {
 	tags1 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	fields2 := map[string]interface{}{
 		"C1": float32(1.3),
@@ -1528,6 +1796,7 @@ func TestGatherMultiComps(t *testing.T) {
 	tags2 := map[string]string{
 		"instance":   "I2",
 		"objectname": "O",
+		"source":     hostname(),
 	}
 	acc.AssertContainsTaggedFields(t, "m", fields1, tags1)
 	acc.AssertContainsTaggedFields(t, "m", fields2, tags2)
@@ -1538,7 +1807,7 @@ func TestGatherMultiComps(t *testing.T) {
 	tags3 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
-		"computer":   "cmp1",
+		"source":     "cmp1",
 	}
 	fields4 := map[string]interface{}{
 		"C1": float32(2.3),
@@ -1547,7 +1816,7 @@ func TestGatherMultiComps(t *testing.T) {
 	tags4 := map[string]string{
 		"instance":   "I2",
 		"objectname": "O",
-		"computer":   "cmp1",
+		"source":     "cmp1",
 	}
 	acc.AssertContainsTaggedFields(t, "m1", fields3, tags3)
 	acc.AssertContainsTaggedFields(t, "m1", fields4, tags4)
@@ -1558,7 +1827,7 @@ func TestGatherMultiComps(t *testing.T) {
 	tags5 := map[string]string{
 		"instance":   "I1",
 		"objectname": "O",
-		"computer":   "cmp2",
+		"source":     "cmp2",
 	}
 	fields6 := map[string]interface{}{
 		"C1": float32(3.3),
@@ -1567,7 +1836,7 @@ func TestGatherMultiComps(t *testing.T) {
 	tags6 := map[string]string{
 		"instance":   "I2",
 		"objectname": "O",
-		"computer":   "cmp2",
+		"source":     "cmp2",
 	}
 	acc.AssertContainsTaggedFields(t, "m2", fields5, tags5)
 	acc.AssertContainsTaggedFields(t, "m2", fields6, tags6)

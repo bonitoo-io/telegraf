@@ -201,6 +201,7 @@ func TestWinPerfcountersConfigGet3(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
+	var sources = make([]string, 1)
 	var instances = make([]string, 1)
 	var counters = make([]string, 2)
 	var perfobjects = make([]perfobject, 1)
@@ -209,10 +210,12 @@ func TestWinPerfcountersConfigGet3(t *testing.T) {
 	instances[0] = "_Total"
 	counters[0] = "% Processor Time"
 	counters[1] = "% Idle Time"
+	sources[0] = "localhost"
 
 	var measurement = "test"
 
 	PerfObject := perfobject{
+		Sources:       sources,
 		ObjectName:    objectname,
 		Instances:     instances,
 		Counters:      counters,

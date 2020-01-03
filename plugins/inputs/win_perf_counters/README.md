@@ -25,7 +25,7 @@ as counters used when performance monitoring
  *Measurement name* is specified per performance object or `win_perf_counters` by default.
  
  *Tags:*
-  - computer - computer name, if specified in the `Computers` parameter, otherwise omitted
+  - source - computer name, as specified in the `Sources` parameter. Name `localhost` is translated into the host name
   - objectname - normalized name of the performance object
   - instance - instance name, if performance object supports multiple instances, otherwise omitted
   
@@ -93,6 +93,20 @@ Supported on Windows Vista/Windows Server 2008 and newer
 Example:
 `UsePerfCounterTime=true`
 
+#### Sources
+*Optional*
+
+Host names or ip addresses of computers to gather all performance counters from.  User, under which Telegraf runs, must be already authenticated to the remote computer(s).
+E.g. via Windows sharing `net use \\SQL-SERVER-01`.
+Use either localhost (`"localhost"`) or real local computer name to gather counters also from localhost among other computers.
+Skip, if gather only from localhost.
+
+If a performance object is present only on specific hosts set `Source` param on the object level configuration to override global Sources.
+
+Example:  `Sources = ["localhost", "SQL-SERVER-01", "SQL-SERVER-02", "SQL-SERVER-03"]`
+
+Default: `Sources = ["localhost"]`
+
 ### Object
 
 See Entry below.
@@ -104,14 +118,6 @@ This must follow before other plugin configurations,
 beneath the main win_perf_counters entry, `[[inputs.win_perf_counters]]`.
 
 Following this are 3 required key/value pairs and three optional parameters and their usage.
-#### Computers
-*Optional*
-
-Host names or IPs of computers to gather counters from. User, under which Telegraf runs, must be already authenticated to the remote computer(s). E.g. via Windows sharing `net use \\SQL-SERVER-01`.
-Skip, if gather only from localhost.
-Use either empty string `""`, localhost `"localhost"` or real computer name to gather counters also from localhost among other computers.
-
-Example:  `Computers = ["localhost", "SQL-SERVER-01", "SQL-SERVER-02", "SQL-SERVER-03"]`
 
 #### ObjectName
 **Required**
@@ -151,6 +157,11 @@ Example: `Counters = ["% Idle Time", "% Disk Read Time", "% Disk Write Time"]`
 This must be specified for every counter you want the results of, or use
 `["*"]` for all the counters of the object, if the `UseWildcardsExpansion` param
 is set to `true`.
+
+#### Sources
+*Optional*
+
+Overrides the [Sources](#sources) global parameter for current performance object. See [Sources](#sources) description for more details.
 
 #### Measurement
 *Optional*

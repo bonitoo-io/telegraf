@@ -5,6 +5,7 @@ package win_perf_counters
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,11 @@ var sampleConfig = `
   #UseWildcardsExpansion = false
   # Period after which counters will be reread from configuration and wildcards in counter paths expanded
   CountersRefreshInterval="1m"
+  # Names or ip addresses of remote computers to gather counters from, including local computer.
+  # Telegraf's user must be already authenticated to the remote computers.
+  # It can be overridden at the object level
+  # Sources = ["localhost"]
+
 
   [[inputs.win_perf_counters.object]]
     # Processor usage, alternative to native, reports on a per core.
@@ -44,9 +50,6 @@ var sampleConfig = `
       "% DPC Time",
     ]
     Measurement = "win_cpu"
-    # Names or IPs of remote computers to gather counters from, including local computer.
-    # Telegraf's user must be already authenticated to the remote computers.
-    # Computers = ["localhost","SQL-SERVER-01","SQL-SERVER-02"]
     # Set to true to include _Total instance when querying for all (*).
     # IncludeTotal=false
     # Print out when the performance counter is missing from object, counter or instance.
@@ -149,26 +152,29 @@ type WinPerfCounters struct {
 	Object                  []perfobject
 	CountersRefreshInterval internal.Duration
 	UseWildcardsExpansion   bool
+	Sources                 []string
 
 	Log telegraf.Logger
 
 	lastRefreshed time.Time
 	queryCreator  PerformanceQueryCreator
 	hostCounters  map[string]*hostCountersInfo
+	// cached os.Hostname()
+	cachedHostname string
 }
 
 type hostCountersInfo struct {
 	// computer name used as key and for printing
 	computer string
 	// computer name used in tag
-	computerTag string
-	counters    []*counter
-	query       PerformanceQuery
-	timestamp   time.Time
+	tag       string
+	counters  []*counter
+	query     PerformanceQuery
+	timestamp time.Time
 }
 
 type perfobject struct {
-	Computers     []string
+	Sources       []string
 	ObjectName    string
 	Counters      []string
 	Instances     []string
@@ -274,22 +280,33 @@ func (m *WinPerfCounters) SampleConfig() string {
 	return sampleConfig
 }
 
+func (m *WinPerfCounters) hostname() string {
+	if m.cachedHostname == "" {
+		hostname, err := os.Hostname()
+		if err == nil {
+			m.cachedHostname = hostname
+		} else {
+			m.cachedHostname = "localhost"
+		}
+	}
+	return m.cachedHostname
+}
+
 //objectName string, counter string, instance string, measurement string, include_total bool
 func (m *WinPerfCounters) AddItem(counterPath, computer, objectName, instance, counterName, measurement string, includeTotal bool) error {
 	var err error
 	var counterHandle PDH_HCOUNTER
 	var hostCounter *hostCountersInfo
 	var ok bool
-	computerTag := computer
-	if computer == "" {
-		computer = "localhost"
-		computerTag = ""
+	sourceTag := computer
+	if computer == "localhost" {
+		sourceTag = m.hostname()
 	}
 	if m.hostCounters == nil {
 		m.hostCounters = make(map[string]*hostCountersInfo)
 	}
 	if hostCounter, ok = m.hostCounters[computer]; !ok {
-		hostCounter = &hostCountersInfo{computer: computer, computerTag: computerTag}
+		hostCounter = &hostCountersInfo{computer: computer, tag: sourceTag}
 		m.hostCounters[computer] = hostCounter
 		hostCounter.query = m.queryCreator.NewPerformanceQuery(computer)
 		if err = hostCounter.query.Open(); err != nil {
@@ -358,19 +375,23 @@ func (m *WinPerfCounters) AddItem(counterPath, computer, objectName, instance, c
 func (m *WinPerfCounters) ParseConfig() error {
 	var counterPath string
 
+	if len(m.Sources) == 0 {
+		m.Sources = []string{"localhost"}
+	}
+
 	if len(m.Object) > 0 {
 		for _, PerfObject := range m.Object {
-			computers := PerfObject.Computers
+			computers := PerfObject.Sources
 			if len(computers) == 0 {
-				computers = []string{""}
+				computers = m.Sources
 			}
 			for _, computer := range computers {
 				computerName := ""
-				if strings.ToLower(computer) == "localhost" {
+				if computer == "" {
 					// localhost as a computer name in counter path doesn't work
-					computer = ""
+					computer = "localhost"
 				}
-				if computer != "" {
+				if computer != "localhost" {
 					computerName = "\\\\" + computer
 				}
 				for _, counter := range PerfObject.Counters {
@@ -519,8 +540,8 @@ func (m *WinPerfCounters) gatherComputerCounters(hostCounterInfo *hostCountersIn
 		if len(instance.instance) > 0 {
 			tags["instance"] = instance.instance
 		}
-		if len(hostCounterInfo.computerTag) > 0 {
-			tags["computer"] = hostCounterInfo.computerTag
+		if len(hostCounterInfo.tag) > 0 {
+			tags["source"] = hostCounterInfo.tag
 		}
 		acc.AddFields(instance.name, fields, tags, hostCounterInfo.timestamp)
 	}
