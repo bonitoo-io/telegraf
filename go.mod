@@ -32,7 +32,7 @@ require (
 	github.com/Mellanox/rdmamap v0.0.0-20191106181932-7c3c4763a6ee
 	github.com/Microsoft/go-winio v0.4.17 // indirect
 	github.com/Microsoft/hcsshim v0.8.21 // indirect
-	github.com/Shopify/sarama v1.29.1
+	github.com/Shopify/sarama v1.30.0
 	github.com/StackExchange/wmi v1.2.1 // indirect
 	github.com/aerospike/aerospike-client-go v1.27.0
 	github.com/alecthomas/participle v0.4.1 // indirect
@@ -207,7 +207,7 @@ require (
 	github.com/openzipkin-contrib/zipkin-go-opentracing v0.4.5
 	github.com/openzipkin/zipkin-go v0.2.5
 	github.com/philhofer/fwd v1.1.1 // indirect
-	github.com/pierrec/lz4 v2.6.0+incompatible // indirect
+	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pion/dtls/v2 v2.0.9
 	github.com/pion/logging v0.2.2 // indirect
 	github.com/pion/transport v0.12.3 // indirect
