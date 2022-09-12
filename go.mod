@@ -145,7 +145,7 @@ require (
 	github.com/testcontainers/testcontainers-go v0.13.0
 	github.com/tidwall/gjson v1.14.1
 	github.com/tinylib/msgp v1.1.6
-	github.com/urfave/cli/v2 v2.3.0
+	github.com/urfave/cli/v2 v2.16.3
 	github.com/vapourismo/knx-go v0.0.0-20211128234507-8198fa17db36
 	github.com/vjeantet/grok v1.0.1
 	github.com/vmware/govmomi v0.29.0
@@ -365,6 +365,7 @@ require (
 	github.com/xdg-go/scram v1.1.1 // indirect
 	github.com/xdg-go/stringprep v1.0.3 // indirect
 	github.com/xdg/stringprep v1.0.3 // indirect
+	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a // indirect
 	github.com/yuin/gopher-lua v0.0.0-20200816102855-ee81675732da // indirect
 	github.com/yusufpapurcu/wmi v1.2.2 // indirect
