@@ -90,9 +90,9 @@ require (
 	github.com/hashicorp/consul/api v1.12.0
 	github.com/hashicorp/go-uuid v1.0.2
 	github.com/influxdata/go-syslog/v3 v3.0.0
-	github.com/influxdata/influxdb-observability/common v0.2.22
+	github.com/influxdata/influxdb-observability/common v0.2.28
 	github.com/influxdata/influxdb-observability/influx2otel v0.2.21
-	github.com/influxdata/influxdb-observability/otel2influx v0.2.22
+	github.com/influxdata/influxdb-observability/otel2influx v0.2.29
 	github.com/influxdata/line-protocol/v2 v2.2.1
 	github.com/influxdata/tail v1.0.1-0.20210707231403-b283181d1fa7
 	github.com/influxdata/toml v0.0.0-20190415235208-270119a8ce65
@@ -154,7 +154,7 @@ require (
 	github.com/xdg/scram v1.0.5
 	github.com/yuin/goldmark v1.4.1
 	go.mongodb.org/mongo-driver v1.9.1
-	go.opentelemetry.io/collector/pdata v0.56.0
+	go.opentelemetry.io/collector/pdata v0.62.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v0.31.0
 	go.opentelemetry.io/otel/metric v0.31.0
 	go.opentelemetry.io/otel/sdk/metric v0.31.0
@@ -169,8 +169,8 @@ require (
 	gonum.org/v1/gonum v0.11.0
 	google.golang.org/api v0.85.0
 	google.golang.org/genproto v0.0.0-20220623142657-077d458a5694
-	google.golang.org/grpc v1.48.0
-	google.golang.org/protobuf v1.28.0
+	google.golang.org/grpc v1.50.0
+	google.golang.org/protobuf v1.28.1
 	gopkg.in/gorethink/gorethink.v3 v3.0.5
 	gopkg.in/olivere/elastic.v5 v5.0.86
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7
