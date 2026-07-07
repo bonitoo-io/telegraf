@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go/wait"
-	elastic5 "gopkg.in/olivere/elastic.v5"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
@@ -26,6 +25,17 @@ const (
 	servicePort = "9200"
 	testindex   = "test-elasticsearch"
 )
+
+type nginxlog struct {
+	IPaddress    string    `json:"IP"`
+	Timestamp    time.Time `json:"@timestamp"`
+	Method       string    `json:"method"`
+	URI          string    `json:"URI"`
+	Httpversion  string    `json:"http_version"`
+	Response     string    `json:"response"`
+	Size         float64   `json:"size"`
+	ResponseTime float64   `json:"response_time"`
+}
 
 func TestGatherIntegration(t *testing.T) {
 	if testing.Short() {
@@ -475,16 +485,6 @@ func TestGatherFailGatherIntegration(t *testing.T) {
 
 func sendData(ctx context.Context, url string) error {
 	// Read the data
-	type nginxlog struct {
-		IPaddress    string    `json:"IP"`
-		Timestamp    time.Time `json:"@timestamp"`
-		Method       string    `json:"method"`
-		URI          string    `json:"URI"`
-		Httpversion  string    `json:"http_version"`
-		Response     string    `json:"response"`
-		Size         float64   `json:"size"`
-		ResponseTime float64   `json:"response_time"`
-	}
 	file, err := os.Open(filepath.Join("testdata", "nginx_logs"))
 	if err != nil {
 		return fmt.Errorf("reading nginx logs failed: %w", err)
@@ -520,31 +520,18 @@ func sendData(ctx context.Context, url string) error {
 	}
 
 	// Create the client
-	options := []elastic5.ClientOptionFunc{
-		elastic5.SetSniff(false),
-		elastic5.SetURL(url),
-		elastic5.SetHealthcheckInterval(10 * time.Second),
-	}
-	client, err := elastic5.NewClient(options...)
+	client, err := newTestIndexer(ctx, url)
 	if err != nil {
 		return fmt.Errorf("creating client failed: %w", err)
 	}
 
 	// Create bulk request for the data
-	bulkRequest := client.Bulk()
-	for _, logline := range logs {
-		bulkRequest.Add(elastic5.NewBulkIndexRequest().
-			Index(testindex).
-			Type("testquery_data").
-			Doc(logline),
-		)
-	}
-	if _, err := bulkRequest.Do(ctx); err != nil {
+	if err := bulkIndex(ctx, client, testindex, logs); err != nil {
 		return fmt.Errorf("sending bulk request failed: %w", err)
 	}
 
 	// Force elastic to refresh indexes to get new batch data
-	if _, err := client.Refresh().Do(ctx); err != nil {
+	if err := client.refresh(ctx); err != nil {
 		return fmt.Errorf("refreshing indices failed: %w", err)
 	}
 
