@@ -19,10 +19,6 @@ import (
 )
 
 func TestIndexerMatrix(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
 	tests := []struct {
 		name  string
 		image string
