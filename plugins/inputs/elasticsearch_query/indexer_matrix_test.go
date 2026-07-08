@@ -94,7 +94,7 @@ func TestIndexerMatrix(t *testing.T) {
 				Size:         490,
 				ResponseTime: 1514,
 			}
-			require.NoError(t, bulkIndex(t.Context(), client, testindex, []nginxlog{expected}))
+			require.NoError(t, client.bulkIndex(t.Context(), testindex, []nginxlog{expected}))
 			require.NoError(t, client.refresh(t.Context()))
 
 			actual, err := queryIndexedLog(t.Context(), addr, testindex)

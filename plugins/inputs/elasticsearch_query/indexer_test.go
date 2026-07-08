@@ -44,7 +44,7 @@ func newTestIndexer(ctx context.Context, baseURL string) (*testIndexer, error) {
 	return idx, nil
 }
 
-func bulkIndex[T any](ctx context.Context, idx *testIndexer, index string, docs []T) error {
+func (idx *testIndexer) bulkIndex(ctx context.Context, index string, docs []nginxlog) error {
 	meta := map[string]any{
 		"_index": index,
 	}

@@ -526,7 +526,7 @@ func sendData(ctx context.Context, url string) error {
 	}
 
 	// Create bulk request for the data
-	if err := bulkIndex(ctx, client, testindex, logs); err != nil {
+	if err := client.bulkIndex(ctx, testindex, logs); err != nil {
 		return fmt.Errorf("sending bulk request failed: %w", err)
 	}
 
