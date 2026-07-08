@@ -16,8 +16,6 @@ import (
 	"github.com/elastic/go-elasticsearch/v5/esapi"
 )
 
-const testDocType = "testquery_data"
-
 type testIndexer struct {
 	client *elasticsearch5.Client
 	major  int
@@ -49,7 +47,7 @@ func (idx *testIndexer) bulkIndex(ctx context.Context, index string, docs []ngin
 		"_index": index,
 	}
 	if idx.major <= 6 {
-		meta["_type"] = testDocType
+		meta["_type"] = "testquery_data"
 	}
 	metaLine, err := json.Marshal(map[string]any{"index": meta})
 	if err != nil {
