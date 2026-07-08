@@ -1,5 +1,9 @@
 //go:build elasticsearch_indexer_selftest
 
+// Self-test verifying the official v5 client works against all supported
+// Elasticsearch versions. Not run in CI; execute manually with:
+//   go test -tags elasticsearch_indexer_selftest -run TestIndexerMatrix ./plugins/inputs/elasticsearch_query/
+
 package elasticsearch_query
 
 import (
