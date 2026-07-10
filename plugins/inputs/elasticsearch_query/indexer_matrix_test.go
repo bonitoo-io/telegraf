@@ -9,10 +9,7 @@ package elasticsearch_query
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"testing"
 	"time"
 
@@ -74,7 +71,7 @@ func TestIndexerMatrix(t *testing.T) {
 				Image:        tt.image,
 				ExposedPorts: []string{servicePort},
 				Env:          tt.env,
-				WaitingFor: wait.ForHTTP("/").WithPort(servicePort).WithStartupTimeout(5 * time.Minute),
+				WaitingFor:   wait.ForHTTP("/").WithPort(servicePort).WithStartupTimeout(5 * time.Minute),
 			}
 			require.NoError(t, container.Start(), "failed to start container")
 			defer container.Terminate()
@@ -96,35 +93,15 @@ func TestIndexerMatrix(t *testing.T) {
 			require.NoError(t, client.bulkIndex(t.Context(), testindex, []nginxlog{expected}))
 			require.NoError(t, client.refresh(t.Context()))
 
-			actual, err := queryIndexedLog(t.Context(), addr, testindex)
+			actual, err := client.queryIndexedLog(t.Context(), testindex)
 			require.NoError(t, err)
 			require.Equal(t, expected, actual)
 		})
 	}
 }
 
-func queryIndexedLog(ctx context.Context, baseURL, index string) (nginxlog, error) {
+func (idx *testIndexer) queryIndexedLog(ctx context.Context, index string) (nginxlog, error) {
 	body := bytes.NewBufferString(`{"query":{"match_all":{}}}`)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/"+index+"/_search", body)
-	if err != nil {
-		return nginxlog{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nginxlog{}, err
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nginxlog{}, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nginxlog{}, fmt.Errorf("search failed with status %s: %s", resp.Status, string(data))
-	}
-
 	var result struct {
 		Hits struct {
 			Hits []struct {
@@ -132,7 +109,12 @@ func queryIndexedLog(ctx context.Context, baseURL, index string) (nginxlog, erro
 			} `json:"hits"`
 		} `json:"hits"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
+	res, err := idx.client.Search(
+		idx.client.Search.WithContext(ctx),
+		idx.client.Search.WithIndex(index),
+		idx.client.Search.WithBody(body),
+	)
+	if err := idx.handleResponse(res, err, &result); err != nil {
 		return nginxlog{}, err
 	}
 	if len(result.Hits.Hits) != 1 {
