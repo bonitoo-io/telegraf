@@ -74,8 +74,7 @@ func TestIndexerMatrix(t *testing.T) {
 				Image:        tt.image,
 				ExposedPorts: []string{servicePort},
 				Env:          tt.env,
-				WaitingFor: wait.ForHTTP("/").WithPort(servicePort).
-					WithStartupTimeout(5 * time.Minute),
+				WaitingFor: wait.ForHTTP("/").WithPort(servicePort).WithStartupTimeout(5 * time.Minute),
 			}
 			require.NoError(t, container.Start(), "failed to start container")
 			defer container.Terminate()
