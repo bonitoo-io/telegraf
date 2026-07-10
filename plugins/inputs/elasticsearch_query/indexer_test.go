@@ -13,7 +13,7 @@ import (
 	"time"
 
 	elasticsearch5 "github.com/elastic/go-elasticsearch/v5"
-	"github.com/elastic/go-elasticsearch/v5/esapi"
+	esapi5 "github.com/elastic/go-elasticsearch/v5/esapi"
 )
 
 type testIndexer struct {
@@ -109,7 +109,7 @@ func (idx *testIndexer) probeMajor(ctx context.Context) (int, error) {
 	return major, nil
 }
 
-func (*testIndexer) handleResponse(res *esapi.Response, err error, out any) error {
+func (*testIndexer) handleResponse(res *esapi5.Response, err error, out any) error {
 	if err != nil {
 		return err
 	}
