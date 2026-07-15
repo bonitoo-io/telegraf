@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Masterminds/semver/v3"
-
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	common_http "github.com/influxdata/telegraf/plugins/common/http"
@@ -19,7 +17,6 @@ import (
 )
 
 type client interface {
-	version() (string, error)
 	isRunning() bool
 	close()
 	buildQueries(aggregation *aggregation) error
@@ -59,7 +56,7 @@ type aggregation struct {
 
 	mapMetricFields map[string]string
 	measurements    map[string]map[string]string
-	queries         interface{} // client specific data to execute the query
+	queries         interface{} // query data built during initialization
 }
 
 func (*ElasticsearchQuery) SampleConfig() string {
@@ -90,27 +87,11 @@ func (e *ElasticsearchQuery) Init() error {
 
 func (e *ElasticsearchQuery) Start(telegraf.Accumulator) error {
 	// Create a new ElasticSearch client
-	client, err := e.newClientV5()
+	client, err := e.newClient()
 	if err != nil {
 		return err
 	}
 	e.client = client
-
-	// Get the ElasticSearch version on first node and check if it's supported
-	version, err := e.client.version()
-	if err != nil {
-		e.Stop()
-		return fmt.Errorf("getting server version failed: %w", err)
-	}
-	ver, err := semver.NewVersion(version)
-	if err != nil {
-		e.Stop()
-		return fmt.Errorf("parsing server version %q failed: %w", version, err)
-	}
-	if ver.Major() < 5 || ver.Major() > 6 {
-		e.Stop()
-		return fmt.Errorf("server version %q not supported (currently supported versions are 5.x and 6.x)", version)
-	}
 
 	// Setup the aggregations, this needs to be done in Start as it will require
 	// API calls to the ElasticSearch endpoint and can thus not happen in Init

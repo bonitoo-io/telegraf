@@ -2,20 +2,14 @@ package elasticsearch_query
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
-	elasticsearch5 "github.com/elastic/go-elasticsearch/v5"
+	elasticsearch6 "github.com/elastic/go-elasticsearch/v6"
 )
 
-func newClientV5(cfg clientConfig) (client, error) {
-	if cfg.enableSniffer {
-		cfg.httpClient.CloseIdleConnections()
-		return nil, errors.New("enable_sniffer is not supported by the official Elasticsearch v5 client")
-	}
-
-	c, err := elasticsearch5.NewClient(elasticsearch5.Config{
+func newClientV6(cfg clientConfig) (client, error) {
+	c, err := elasticsearch6.NewClient(elasticsearch6.Config{
 		Addresses: cfg.urls,
 		Username:  cfg.username,
 		Password:  cfg.password,
@@ -26,7 +20,7 @@ func newClientV5(cfg clientConfig) (client, error) {
 		return nil, fmt.Errorf("creating Elasticsearch client failed: %w", err)
 	}
 
-	return &queryClient{
+	client := &queryClient{
 		httpClient: cfg.httpClient,
 		log:        cfg.log,
 		getFieldMappingResponse: func(ctx context.Context, index, field string) (*esResponse, error) {
@@ -51,5 +45,10 @@ func newClientV5(cfg clientConfig) (client, error) {
 			}
 			return &esResponse{statusCode: res.StatusCode, body: res.Body}, err
 		},
-	}, nil
+	}
+	if cfg.enableSniffer {
+		// The v6 client exposes only DiscoverNodes(), so in-flight calls cannot be canceled.
+		client.startDiscovery(cfg.discoveryInterval, func(context.Context) error { return c.DiscoverNodes() })
+	}
+	return client, nil
 }

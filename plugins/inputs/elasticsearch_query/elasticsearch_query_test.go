@@ -187,17 +187,48 @@ func TestGatherIntegration(t *testing.T) {
 		),
 	}
 
+	tests := []struct {
+		name  string
+		image string
+		env   map[string]string
+	}{
+		{
+			name:  "v5",
+			image: "elasticsearch:5.6.16",
+			env:   map[string]string{"ES_JAVA_OPTS": "-Xms512m -Xmx512m"},
+		},
+		{
+			name:  "v6",
+			image: "elasticsearch:6.8.23",
+			env: map[string]string{
+				"discovery.type": "single-node",
+				"ES_JAVA_OPTS":   "-Xms512m -Xmx512m",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runGatherIntegration(t, tt.image, tt.env, expectedFields, expectedMetrics)
+		})
+	}
+}
+
+func runGatherIntegration(
+	t *testing.T,
+	image string,
+	env map[string]string,
+	expectedFields []map[string]string,
+	expectedMetrics []telegraf.Metric,
+) {
+	t.Helper()
+
 	// Setup the container
 	container := &testutil.Container{
-		Image:        "elasticsearch:6.8.23",
+		Image:        image,
 		ExposedPorts: []string{servicePort},
-		Env: map[string]string{
-			"discovery.type": "single-node",
-		},
-		WaitingFor: wait.ForAll(
-			wait.ForLog("] mode [basic] - valid"),
-			wait.ForListeningPort(servicePort),
-		),
+		Env:          env,
+		WaitingFor:   wait.ForHTTP("/").WithPort(servicePort).WithStartupTimeout(5 * time.Minute),
 	}
 	require.NoError(t, container.Start(), "failed to start container")
 	defer container.Terminate()
@@ -492,27 +523,37 @@ func TestGatherFailGatherIntegration(t *testing.T) {
 }
 
 func TestStartupFailureReleasesClient(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := w.Write([]byte(`{"version": {"number": "8.1.2"}}`)); err != nil {
+		if r.URL.Path != "/" {
+			http.Error(w, `{"error":{"type":"test_error","reason":"mapping failed"}}`, http.StatusInternalServerError)
+			return
+		}
+		if _, err := w.Write([]byte(`{"version":{"number":"6.8.23"}}`)); err != nil {
 			t.Error(err)
 		}
 	}))
 	defer server.Close()
 
 	plugin := &ElasticsearchQuery{
-		URLs:                []string{server.URL},
-		HealthCheckInterval: config.Duration(10 * time.Second),
-		Log:                 testutil.Logger{},
+		URLs: []string{server.URL},
+		Aggregations: []aggregation{{
+			Index:           "test",
+			MeasurementName: "test",
+			DateField:       "@timestamp",
+			MetricFields:    []string{"value"},
+			MetricFunction:  "avg",
+		}},
+		Log: testutil.Logger{},
 	}
 	require.NoError(t, plugin.Init())
 
 	var acc testutil.Accumulator
-	require.ErrorContains(t, plugin.Start(&acc), "not supported")
+	require.ErrorContains(t, plugin.Start(&acc), "initializing aggregation")
 
-	// The failed start must release the client to not leak the
-	// health-check goroutine
-	require.Nil(t, plugin.client.(*clientV5).client)
+	// The failed start must release the client resources.
+	require.False(t, plugin.client.isRunning())
+	require.Nil(t, plugin.client.(*queryClient).httpClient)
 }
 
 func sendData(ctx context.Context, url string) error {
