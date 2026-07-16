@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,13 +70,13 @@ type esResponse struct {
 }
 
 func (r *esResponse) handle(err error, out interface{}) error {
+	if r == nil {
+		return err
+	}
+	defer r.body.Close()
 	if err != nil {
 		return err
 	}
-	if r == nil {
-		return nil
-	}
-	defer r.body.Close()
 
 	if r.statusCode > 299 {
 		data, err := io.ReadAll(r.body)
@@ -89,16 +90,29 @@ func (r *esResponse) handle(err error, out interface{}) error {
 				Reason string `json:"reason"`
 			} `json:"error"`
 		}
-		if err := json.Unmarshal(data, &result); err == nil {
-			if result.Error.Type != "" && result.Error.Reason != "" {
-				return fmt.Errorf("%s - %s", result.Error.Type, result.Error.Reason)
+		if err := json.Unmarshal(data, &result); err == nil && result.Error.Reason != "" {
+			msg := fmt.Sprintf(
+				"elastic: Error %d (%s): %s",
+				r.statusCode,
+				http.StatusText(r.statusCode),
+				result.Error.Reason,
+			)
+			if result.Error.Type != "" {
+				msg += " [type=" + result.Error.Type + "]"
 			}
-			if result.Error.Reason != "" {
-				return fmt.Errorf("error %d (%s): %s", r.statusCode, http.StatusText(r.statusCode), result.Error.Reason)
-			}
+			return errors.New(msg)
 		}
 
-		return fmt.Errorf("error %d (%s): %s", r.statusCode, http.StatusText(r.statusCode), strings.TrimSpace(string(data)))
+		if detail := strings.TrimSpace(string(data)); detail != "" {
+			return fmt.Errorf(
+				"elastic: Error %d (%s): %s",
+				r.statusCode,
+				http.StatusText(r.statusCode),
+				detail,
+			)
+		}
+
+		return fmt.Errorf("elastic: Error %d (%s)", r.statusCode, http.StatusText(r.statusCode))
 	}
 	if out != nil {
 		return json.NewDecoder(r.body).Decode(out)

@@ -34,6 +34,49 @@ const (
 	testindex   = "test-elasticsearch"
 )
 
+func TestResponseHandleError(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		expected   string
+	}{
+		{
+			name:       "type and reason",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":{"type":"index_not_found_exception","reason":"no such index"}}`,
+			expected:   "elastic: Error 404 (Not Found): no such index [type=index_not_found_exception]",
+		},
+		{
+			name:       "reason without type",
+			statusCode: http.StatusBadGateway,
+			body:       `{"error":{"reason":"upstream failed"}}`,
+			expected:   "elastic: Error 502 (Bad Gateway): upstream failed",
+		},
+		{
+			name:       "unstructured response",
+			statusCode: http.StatusBadGateway,
+			body:       " proxy failed\n",
+			expected:   "elastic: Error 502 (Bad Gateway): proxy failed",
+		},
+		{
+			name:       "empty response",
+			statusCode: http.StatusBadGateway,
+			expected:   "elastic: Error 502 (Bad Gateway)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := &esResponse{
+				statusCode: tt.statusCode,
+				body:       io.NopCloser(strings.NewReader(tt.body)),
+			}
+			require.EqualError(t, response.handle(nil, nil), tt.expected)
+		})
+	}
+}
+
 type nginxlog struct {
 	IPaddress    string    `json:"IP"`
 	Timestamp    time.Time `json:"@timestamp"`
@@ -520,6 +563,25 @@ func TestGatherFailGatherIntegration(t *testing.T) {
 			require.ErrorContains(t, acc.GatherError(plugin.Gather), tt.expected)
 		})
 	}
+}
+
+func TestUnsupportedVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"version":{"number":"8.1.2"}}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+
+	plugin := &ElasticsearchQuery{
+		URLs: []string{server.URL},
+		Log:  testutil.Logger{},
+	}
+	require.NoError(t, plugin.Init())
+
+	var acc testutil.Accumulator
+	require.ErrorContains(t, plugin.Start(&acc), `server version "8.1.2" not supported`)
 }
 
 func TestStartupFailureReleasesClient(t *testing.T) {
