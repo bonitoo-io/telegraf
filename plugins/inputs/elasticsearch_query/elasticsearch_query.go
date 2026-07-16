@@ -56,7 +56,7 @@ type aggregation struct {
 
 	mapMetricFields map[string]string
 	measurements    map[string]map[string]string
-	queries         interface{} // query data built during initialization
+	queries         interface{} // prepared once and reused across collections
 }
 
 func (*ElasticsearchQuery) SampleConfig() string {
