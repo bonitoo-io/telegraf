@@ -128,6 +128,8 @@ func (t roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.client.Do(req)
 }
 
+// startDiscovery runs node discovery immediately and repeats it when the interval is positive.
+// The returned function stops the loop and waits for any active call to return.
 func startDiscovery(log telegraf.Logger, interval time.Duration, discover func(context.Context) error) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -137,7 +139,7 @@ func startDiscovery(log telegraf.Logger, interval time.Duration, discover func(c
 		defer wg.Done()
 
 		if err := discover(ctx); err != nil && ctx.Err() == nil {
-			log.Errorf("Discovering Elasticsearch nodes failed: %v", err)
+			log.Errorf("Discovering ElasticSearch nodes failed: %v", err)
 		}
 		if interval <= 0 {
 			return
@@ -151,7 +153,7 @@ func startDiscovery(log telegraf.Logger, interval time.Duration, discover func(c
 				return
 			case <-ticker.C:
 				if err := discover(ctx); err != nil && ctx.Err() == nil {
-					log.Errorf("Discovering Elasticsearch nodes failed: %v", err)
+					log.Errorf("Discovering ElasticSearch nodes failed: %v", err)
 				}
 			}
 		}
