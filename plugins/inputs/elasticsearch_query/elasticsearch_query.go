@@ -17,12 +17,9 @@ import (
 )
 
 type client interface {
-	isRunning() bool
 	close()
-	buildQueries(aggregation *aggregation) error
 	getFieldMapping(context.Context, string, string) (map[string]interface{}, error)
 	query(context.Context, *aggregation) (interface{}, int64, error)
-	aggregate(telegraf.Accumulator, string, map[string]string, interface{}) error
 }
 
 //go:embed sample.conf
@@ -85,6 +82,40 @@ func (e *ElasticsearchQuery) Init() error {
 	return nil
 }
 
+func (e *ElasticsearchQuery) newClient() (client, error) {
+	// Make sure the HTTP client exists
+	httpClient, err := e.HTTPClientConfig.CreateClient(context.Background(), e.Log)
+	if err != nil {
+		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+	}
+
+	cfg := clientConfig{
+		urls:              e.URLs,
+		username:          e.Username,
+		password:          e.Password,
+		enableSniffer:     e.EnableSniffer,
+		discoveryInterval: time.Duration(e.HealthCheckInterval),
+		httpClient:        httpClient,
+		log:               e.Log,
+	}
+
+	version, major, err := cfg.probeVersion(context.Background())
+	if err != nil {
+		httpClient.CloseIdleConnections()
+		return nil, fmt.Errorf("getting server version failed: %w", err)
+	}
+
+	switch major {
+	case 5:
+		return newClientV5(cfg)
+	case 6:
+		return newClientV6(cfg)
+	default:
+		httpClient.CloseIdleConnections()
+		return nil, fmt.Errorf("server version %q not supported (currently supported versions are 5.x and 6.x)", version)
+	}
+}
+
 func (e *ElasticsearchQuery) Start(telegraf.Accumulator) error {
 	// Create a new ElasticSearch client
 	client, err := e.newClient()
@@ -117,14 +148,6 @@ func (e *ElasticsearchQuery) Stop() {
 
 // Gather writes the results of the queries from Elasticsearch to the Accumulator.
 func (e *ElasticsearchQuery) Gather(acc telegraf.Accumulator) error {
-	// Make sure we are connected
-	if !e.client.isRunning() {
-		e.Stop()
-		if err := e.Start(acc); err != nil {
-			return err
-		}
-	}
-
 	var wg sync.WaitGroup
 	for i := range e.Aggregations {
 		wg.Add(1)
@@ -162,7 +185,7 @@ func (e *ElasticsearchQuery) initAggregation(ctx context.Context, agg *aggregati
 		}
 	}
 
-	if err := e.client.buildQueries(agg); err != nil {
+	if err := buildQueries(agg); err != nil {
 		return fmt.Errorf("building aggregation query failed: %w", err)
 	}
 
@@ -190,7 +213,7 @@ func (e *ElasticsearchQuery) gatherAggregation(acc telegraf.Accumulator, aggrega
 
 	// Aggregate results that support aggregation
 	for measurement, aggNameFunction := range aggregation.measurements {
-		if err := e.client.aggregate(acc, measurement, aggNameFunction, result); err != nil {
+		if err := aggregate(acc, measurement, aggNameFunction, result); err != nil {
 			return fmt.Errorf("recursing response failed: %w", err)
 		}
 	}

@@ -1,18 +1,16 @@
 package elasticsearch_query
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Masterminds/semver/v3"
 	elasticsearch5 "github.com/elastic/go-elasticsearch/v5"
 
 	"github.com/influxdata/telegraf"
@@ -28,6 +26,14 @@ type clientConfig struct {
 	log               telegraf.Logger
 }
 
+type serverVersion struct {
+	Number string `json:"number"`
+}
+
+type serverInfo struct {
+	Version serverVersion `json:"version"`
+}
+
 func (cfg clientConfig) probeVersion(ctx context.Context) (string, int, error) {
 	// Use the v5 client only for the version-agnostic GET / probe.
 	probe, err := elasticsearch5.NewClient(elasticsearch5.Config{
@@ -37,164 +43,101 @@ func (cfg clientConfig) probeVersion(ctx context.Context) (string, int, error) {
 		Transport: roundTripper{client: cfg.httpClient},
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("creating Elasticsearch client failed: %w", err)
+		return "", 0, fmt.Errorf("creating ElasticSearch client failed: %w", err)
 	}
 
 	res, err := probe.Info(probe.Info.WithContext(ctx))
 	if err != nil {
 		return "", 0, err
 	}
-	response := &esResponse{statusCode: res.StatusCode, body: res.Body}
+	defer res.Body.Close()
 
-	var info struct {
-		Version struct {
-			Number string `json:"number"`
-		} `json:"version"`
-	}
-	if err := response.handle(nil, &info); err != nil {
+	if err := checkForError(res.StatusCode, res.Body); err != nil {
 		return "", 0, err
 	}
 
-	majorText, _, _ := strings.Cut(info.Version.Number, ".")
-	major, err := strconv.Atoi(majorText)
+	var info serverInfo
+	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
+		return "", 0, err
+	}
+
+	version, err := semver.NewVersion(info.Version.Number)
 	if err != nil {
 		return "", 0, fmt.Errorf("parsing server version %q failed: %w", info.Version.Number, err)
 	}
 
-	return info.Version.Number, major, nil
+	return info.Version.Number, int(version.Major()), nil
 }
 
-type esResponse struct {
+type apiErrorDetails struct {
+	Type   string `json:"type"`
+	Reason string `json:"reason"`
+}
+
+type apiErrorResponse struct {
+	Error apiErrorDetails `json:"error"`
+}
+
+type apiError struct {
 	statusCode int
-	body       io.ReadCloser
+	errorType  string
+	reason     string
 }
 
-func (r *esResponse) handle(err error, out interface{}) error {
-	if r == nil {
-		return err
+func (e *apiError) Error() string {
+	msg := fmt.Sprintf("received error %d (%s)", e.statusCode, http.StatusText(e.statusCode))
+	if e.reason != "" {
+		msg += ": " + e.reason
 	}
-	defer r.body.Close()
+	if e.errorType != "" {
+		msg += " [type=" + e.errorType + "]"
+	}
+	return msg
+}
+
+func checkForError(statusCode int, body io.Reader) error {
+	if statusCode <= 299 {
+		return nil
+	}
+
+	data, err := io.ReadAll(body)
 	if err != nil {
 		return err
 	}
 
-	if r.statusCode > 299 {
-		data, err := io.ReadAll(r.body)
-		if err != nil {
-			return err
+	var response apiErrorResponse
+	if err := json.Unmarshal(data, &response); err == nil && response.Error.Reason != "" {
+		return &apiError{
+			statusCode: statusCode,
+			errorType:  response.Error.Type,
+			reason:     response.Error.Reason,
 		}
-
-		var result struct {
-			Error struct {
-				Type   string `json:"type"`
-				Reason string `json:"reason"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(data, &result); err == nil && result.Error.Reason != "" {
-			msg := fmt.Sprintf(
-				"elastic: Error %d (%s): %s",
-				r.statusCode,
-				http.StatusText(r.statusCode),
-				result.Error.Reason,
-			)
-			if result.Error.Type != "" {
-				msg += " [type=" + result.Error.Type + "]"
-			}
-			return errors.New(msg)
-		}
-
-		if detail := strings.TrimSpace(string(data)); detail != "" {
-			return fmt.Errorf(
-				"elastic: Error %d (%s): %s",
-				r.statusCode,
-				http.StatusText(r.statusCode),
-				detail,
-			)
-		}
-
-		return fmt.Errorf("elastic: Error %d (%s)", r.statusCode, http.StatusText(r.statusCode))
-	}
-	if out != nil {
-		return json.NewDecoder(r.body).Decode(out)
 	}
 
-	return nil
+	return &apiError{statusCode: statusCode, reason: strings.TrimSpace(string(data))}
 }
 
 type roundTripper struct {
 	client *http.Client
 }
 
-// RoundTrip implements http.RoundTripper.
+// RoundTrip delegates to the configured HTTP client to preserve its overall
+// timeout, including response-body reads, and cookie and redirect handling
+// that the underlying transport does not provide.
 func (t roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.client.Do(req)
 }
 
-// queryClient provides shared query behavior. Per-major adapters wrap their
-// distinct response types, which expose status and body as fields.
-type queryClient struct {
-	httpClient    *http.Client
-	log           telegraf.Logger
-	closed        bool
-	stopDiscovery func()
-
-	getFieldMappingResponse func(context.Context, string, string) (*esResponse, error)
-	search                  func(context.Context, string, io.Reader) (*esResponse, error)
-}
-
-func (e *ElasticsearchQuery) newClient() (client, error) {
-	// Make sure the HTTP client exists
-	httpClient, err := e.HTTPClientConfig.CreateClient(context.Background(), e.Log)
-	if err != nil {
-		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
-	}
-
-	cfg := clientConfig{
-		urls:              e.URLs,
-		username:          e.Username,
-		password:          e.Password,
-		enableSniffer:     e.EnableSniffer,
-		discoveryInterval: time.Duration(e.HealthCheckInterval),
-		httpClient:        httpClient,
-		log:               e.Log,
-	}
-
-	version, major, err := cfg.probeVersion(context.Background())
-	if err != nil {
-		httpClient.CloseIdleConnections()
-		return nil, fmt.Errorf("getting server version failed: %w", err)
-	}
-
-	switch major {
-	case 5:
-		return newClientV5(cfg)
-	case 6:
-		return newClientV6(cfg)
-	default:
-		httpClient.CloseIdleConnections()
-		return nil, fmt.Errorf("server version %q not supported (currently supported versions are 5.x and 6.x)", version)
-	}
-}
-
-func (c *queryClient) close() {
-	c.closed = true
-	if c.stopDiscovery != nil {
-		c.stopDiscovery()
-		c.stopDiscovery = nil
-	}
-	if c.httpClient != nil {
-		c.httpClient.CloseIdleConnections()
-		c.httpClient = nil
-	}
-}
-
-func (c *queryClient) startDiscovery(interval time.Duration, discover func(context.Context) error) {
+func startDiscovery(log telegraf.Logger, interval time.Duration, discover func(context.Context) error) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var wg sync.WaitGroup
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
 		if err := discover(ctx); err != nil && ctx.Err() == nil {
-			c.log.Errorf("Discovering Elasticsearch nodes failed: %v", err)
+			log.Errorf("Discovering Elasticsearch nodes failed: %v", err)
 		}
 		if interval <= 0 {
 			return
@@ -208,29 +151,16 @@ func (c *queryClient) startDiscovery(interval time.Duration, discover func(conte
 				return
 			case <-ticker.C:
 				if err := discover(ctx); err != nil && ctx.Err() == nil {
-					c.log.Errorf("Discovering Elasticsearch nodes failed: %v", err)
+					log.Errorf("Discovering Elasticsearch nodes failed: %v", err)
 				}
 			}
 		}
-	})
+	}()
 
-	c.stopDiscovery = func() {
+	return func() {
 		cancel()
 		wg.Wait()
 	}
-}
-
-func (c *queryClient) isRunning() bool {
-	return !c.closed
-}
-
-func (c *queryClient) getFieldMapping(ctx context.Context, index, field string) (map[string]interface{}, error) {
-	res, err := c.getFieldMappingResponse(ctx, index, field)
-	var result map[string]interface{}
-	if err := res.handle(err, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 type queryData struct {
@@ -250,7 +180,7 @@ func (q *queryData) addSubAggregation(name string, subAggregation map[string]int
 	aggs[name] = subAggregation
 }
 
-func (*queryClient) buildQueries(aggregation *aggregation) error {
+func buildQueries(aggregation *aggregation) error {
 	// Create one aggregation per metric field found or function defined for
 	// numeric fields
 	queries := make([]queryData, 0, len(aggregation.mapMetricFields)+len(aggregation.Tags))
@@ -343,11 +273,17 @@ func (a *aggregation) buildRangeQuery(from, to time.Time) map[string]interface{}
 	return rangeQuery
 }
 
+type searchHits struct {
+	Total json.RawMessage `json:"total"`
+}
+
 type searchResponse struct {
-	Hits struct {
-		Total json.RawMessage `json:"total"`
-	} `json:"hits"`
+	Hits         searchHits                 `json:"hits"`
 	Aggregations map[string]json.RawMessage `json:"aggregations"`
+}
+
+type totalHits struct {
+	Value int64 `json:"value"`
 }
 
 func (r *searchResponse) totalHits() int64 {
@@ -357,17 +293,15 @@ func (r *searchResponse) totalHits() int64 {
 	}
 
 	// Elasticsearch 7 and later return hits.total as an object.
-	var totalObject struct {
-		Value int64 `json:"value"`
-	}
-	if err := json.Unmarshal(r.Hits.Total, &totalObject); err == nil {
-		return totalObject.Value
+	var result totalHits
+	if err := json.Unmarshal(r.Hits.Total, &result); err == nil {
+		return result.Value
 	}
 
 	return 0
 }
 
-func (c *queryClient) query(ctx context.Context, aggregation *aggregation) (interface{}, int64, error) {
+func buildSearchBody(aggregation *aggregation, log telegraf.Logger) ([]byte, error) {
 	// buildQueries stores []queryData in this field before query execution.
 	// If the assertion fails, it indicates a programming error in this package.
 	queries := aggregation.queries.([]queryData)
@@ -394,9 +328,9 @@ func (c *queryClient) query(ctx context.Context, aggregation *aggregation) (inte
 
 	data, err := json.Marshal(query)
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal request failed: %w", err)
+		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
-	c.log.Debugf("{\"query\": %s}", string(data))
+	log.Debugf("{\"query\": %s}", string(data))
 
 	body := map[string]interface{}{
 		"query": query,
@@ -415,20 +349,17 @@ func (c *queryClient) query(ctx context.Context, aggregation *aggregation) (inte
 
 	data, err = json.Marshal(body)
 	if err != nil {
-		return nil, 0, fmt.Errorf("marshal request failed: %w", err)
+		return nil, fmt.Errorf("marshal request failed: %w", err)
 	}
+	return data, nil
+}
 
-	res, err := c.search(ctx, aggregation.Index, bytes.NewReader(data))
-	var result searchResponse
-	if err := res.handle(err, &result); err != nil {
-		return nil, 0, err
-	}
+type aggregationValue struct {
+	Value *float64 `json:"value"`
+}
 
-	if len(result.Aggregations) == 0 {
-		return nil, result.totalHits(), nil
-	}
-
-	return result.Aggregations, result.totalHits(), nil
+type aggregationBuckets struct {
+	Buckets []map[string]json.RawMessage `json:"buckets"`
 }
 
 type aggregationIterator struct {
@@ -465,9 +396,7 @@ func (m *aggregationIterator) iterate(acc telegraf.Accumulator, nameFunction map
 		// Execute the aggregation function
 		switch function {
 		case "avg", "sum", "min", "max":
-			var result struct {
-				Value *float64 `json:"value"`
-			}
+			var result aggregationValue
 			if err := json.Unmarshal(response[name], &result); err != nil {
 				return err
 			}
@@ -477,9 +406,7 @@ func (m *aggregationIterator) iterate(acc telegraf.Accumulator, nameFunction map
 				m.fields[name] = float64(0)
 			}
 		case "terms":
-			var result struct {
-				Buckets []map[string]json.RawMessage `json:"buckets"`
-			}
+			var result aggregationBuckets
 			if err := json.Unmarshal(response[name], &result); err != nil {
 				return err
 			}
@@ -521,7 +448,7 @@ func (m *aggregationIterator) iterate(acc telegraf.Accumulator, nameFunction map
 	return nil
 }
 
-func (*queryClient) aggregate(acc telegraf.Accumulator, measurement string, nameFunction map[string]string, response interface{}) error {
+func aggregate(acc telegraf.Accumulator, measurement string, nameFunction map[string]string, response interface{}) error {
 	// The query method returns map[string]json.RawMessage for aggregation responses.
 	r := response.(map[string]json.RawMessage)
 

@@ -1,18 +1,28 @@
 package elasticsearch_query
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"net/http"
 
 	elasticsearch5 "github.com/elastic/go-elasticsearch/v5"
+
+	"github.com/influxdata/telegraf"
 )
+
+type clientV5 struct {
+	client     *elasticsearch5.Client
+	httpClient *http.Client
+	log        telegraf.Logger
+}
 
 func newClientV5(cfg clientConfig) (client, error) {
 	if cfg.enableSniffer {
 		cfg.httpClient.CloseIdleConnections()
-		return nil, errors.New("enable_sniffer is not supported by the official Elasticsearch v5 client")
+		return nil, errors.New("enable_sniffer is not supported by the official ElasticSearch v5 client")
 	}
 
 	c, err := elasticsearch5.NewClient(elasticsearch5.Config{
@@ -23,33 +33,66 @@ func newClientV5(cfg clientConfig) (client, error) {
 	})
 	if err != nil {
 		cfg.httpClient.CloseIdleConnections()
-		return nil, fmt.Errorf("creating Elasticsearch client failed: %w", err)
+		return nil, fmt.Errorf("creating ElasticSearch client failed: %w", err)
 	}
 
-	return &queryClient{
-		httpClient: cfg.httpClient,
-		log:        cfg.log,
-		getFieldMappingResponse: func(ctx context.Context, index, field string) (*esResponse, error) {
-			res, err := c.Indices.GetFieldMapping(
-				[]string{field},
-				c.Indices.GetFieldMapping.WithContext(ctx),
-				c.Indices.GetFieldMapping.WithIndex(index),
-			)
-			if res == nil {
-				return nil, err
-			}
-			return &esResponse{statusCode: res.StatusCode, body: res.Body}, err
-		},
-		search: func(ctx context.Context, index string, body io.Reader) (*esResponse, error) {
-			res, err := c.Search(
-				c.Search.WithContext(ctx),
-				c.Search.WithIndex(index),
-				c.Search.WithBody(body),
-			)
-			if res == nil {
-				return nil, err
-			}
-			return &esResponse{statusCode: res.StatusCode, body: res.Body}, err
-		},
-	}, nil
+	return &clientV5{client: c, httpClient: cfg.httpClient, log: cfg.log}, nil
+}
+
+func (c *clientV5) close() {
+	if c.httpClient != nil {
+		c.httpClient.CloseIdleConnections()
+	}
+}
+
+func (c *clientV5) getFieldMapping(ctx context.Context, index, field string) (map[string]interface{}, error) {
+	res, err := c.client.Indices.GetFieldMapping(
+		[]string{field},
+		c.client.Indices.GetFieldMapping.WithContext(ctx),
+		c.client.Indices.GetFieldMapping.WithIndex(index),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if err := checkForError(res.StatusCode, res.Body); err != nil {
+		return nil, err
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *clientV5) query(ctx context.Context, aggregation *aggregation) (interface{}, int64, error) {
+	data, err := buildSearchBody(aggregation, c.log)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	res, err := c.client.Search(
+		c.client.Search.WithContext(ctx),
+		c.client.Search.WithIndex(aggregation.Index),
+		c.client.Search.WithBody(bytes.NewReader(data)),
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer res.Body.Close()
+
+	if err := checkForError(res.StatusCode, res.Body); err != nil {
+		return nil, 0, err
+	}
+
+	var result searchResponse
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return nil, 0, err
+	}
+	if len(result.Aggregations) == 0 {
+		return nil, result.totalHits(), nil
+	}
+	return result.Aggregations, result.totalHits(), nil
 }

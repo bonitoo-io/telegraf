@@ -1,12 +1,23 @@
 package elasticsearch_query
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
+	"net/http"
 
 	elasticsearch6 "github.com/elastic/go-elasticsearch/v6"
+
+	"github.com/influxdata/telegraf"
 )
+
+type clientV6 struct {
+	client        *elasticsearch6.Client
+	httpClient    *http.Client
+	log           telegraf.Logger
+	stopDiscovery func()
+}
 
 func newClientV6(cfg clientConfig) (client, error) {
 	c, err := elasticsearch6.NewClient(elasticsearch6.Config{
@@ -17,38 +28,76 @@ func newClientV6(cfg clientConfig) (client, error) {
 	})
 	if err != nil {
 		cfg.httpClient.CloseIdleConnections()
-		return nil, fmt.Errorf("creating Elasticsearch client failed: %w", err)
+		return nil, fmt.Errorf("creating ElasticSearch client failed: %w", err)
 	}
 
-	client := &queryClient{
-		httpClient: cfg.httpClient,
-		log:        cfg.log,
-		getFieldMappingResponse: func(ctx context.Context, index, field string) (*esResponse, error) {
-			res, err := c.Indices.GetFieldMapping(
-				[]string{field},
-				c.Indices.GetFieldMapping.WithContext(ctx),
-				c.Indices.GetFieldMapping.WithIndex(index),
-			)
-			if res == nil {
-				return nil, err
-			}
-			return &esResponse{statusCode: res.StatusCode, body: res.Body}, err
-		},
-		search: func(ctx context.Context, index string, body io.Reader) (*esResponse, error) {
-			res, err := c.Search(
-				c.Search.WithContext(ctx),
-				c.Search.WithIndex(index),
-				c.Search.WithBody(body),
-			)
-			if res == nil {
-				return nil, err
-			}
-			return &esResponse{statusCode: res.StatusCode, body: res.Body}, err
-		},
-	}
+	client := &clientV6{client: c, httpClient: cfg.httpClient, log: cfg.log}
 	if cfg.enableSniffer {
 		// The v6 client exposes only DiscoverNodes(), so in-flight calls cannot be canceled.
-		client.startDiscovery(cfg.discoveryInterval, func(context.Context) error { return c.DiscoverNodes() })
+		client.stopDiscovery = startDiscovery(cfg.log, cfg.discoveryInterval, func(context.Context) error {
+			return c.DiscoverNodes()
+		})
 	}
 	return client, nil
+}
+
+func (c *clientV6) close() {
+	if c.stopDiscovery != nil {
+		c.stopDiscovery()
+	}
+	if c.httpClient != nil {
+		c.httpClient.CloseIdleConnections()
+	}
+}
+
+func (c *clientV6) getFieldMapping(ctx context.Context, index, field string) (map[string]interface{}, error) {
+	res, err := c.client.Indices.GetFieldMapping(
+		[]string{field},
+		c.client.Indices.GetFieldMapping.WithContext(ctx),
+		c.client.Indices.GetFieldMapping.WithIndex(index),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if err := checkForError(res.StatusCode, res.Body); err != nil {
+		return nil, err
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (c *clientV6) query(ctx context.Context, aggregation *aggregation) (interface{}, int64, error) {
+	data, err := buildSearchBody(aggregation, c.log)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	res, err := c.client.Search(
+		c.client.Search.WithContext(ctx),
+		c.client.Search.WithIndex(aggregation.Index),
+		c.client.Search.WithBody(bytes.NewReader(data)),
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer res.Body.Close()
+
+	if err := checkForError(res.StatusCode, res.Body); err != nil {
+		return nil, 0, err
+	}
+
+	var result searchResponse
+	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
+		return nil, 0, err
+	}
+	if len(result.Aggregations) == 0 {
+		return nil, result.totalHits(), nil
+	}
+	return result.Aggregations, result.totalHits(), nil
 }
