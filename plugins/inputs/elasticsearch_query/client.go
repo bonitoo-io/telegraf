@@ -48,17 +48,17 @@ func (cfg clientConfig) probeVersion(ctx context.Context) (string, int, error) {
 
 	res, err := probe.Info(probe.Info.WithContext(ctx))
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("getting server version failed: %w", err)
 	}
 	defer res.Body.Close()
 
 	if err := checkForError(res.StatusCode, res.Body); err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("getting server version failed: %w", err)
 	}
 
 	var info serverInfo
 	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("getting server version failed: %w", err)
 	}
 
 	version, err := semver.NewVersion(info.Version.Number)

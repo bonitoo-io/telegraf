@@ -102,7 +102,7 @@ func (e *ElasticsearchQuery) newClient() (client, error) {
 	version, major, err := cfg.probeVersion(context.Background())
 	if err != nil {
 		httpClient.CloseIdleConnections()
-		return nil, fmt.Errorf("getting server version failed: %w", err)
+		return nil, err
 	}
 
 	switch major {

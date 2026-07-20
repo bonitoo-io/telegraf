@@ -880,6 +880,28 @@ func TestGatherFailGatherIntegration(t *testing.T) {
 	}
 }
 
+func TestInvalidServerVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"version":{"number":"invalid"}}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+
+	plugin := &ElasticsearchQuery{
+		URLs: []string{server.URL},
+		Log:  testutil.Logger{},
+	}
+	require.NoError(t, plugin.Init())
+
+	var acc testutil.Accumulator
+	err := plugin.Start(&acc)
+	require.ErrorContains(t, err, `parsing server version "invalid" failed`)
+	require.NotContains(t, err.Error(), "getting server version failed")
+	require.Nil(t, plugin.client)
+}
+
 func TestStartupFailureReleasesClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
