@@ -861,7 +861,7 @@ func TestGatherFailGatherIntegration(t *testing.T) {
 				DateField:       "@timestamp",
 				QueryPeriod:     config.Duration(time.Second * 600),
 			},
-			expected: "received error 404 (Not Found): no such index",
+			expected: "404 (Not Found): no such index",
 		},
 		{
 			name: "invalid time format",
@@ -872,7 +872,7 @@ func TestGatherFailGatherIntegration(t *testing.T) {
 				DateFieldFormat: "yyyy",
 				QueryPeriod:     config.Duration(time.Second * 600),
 			},
-			expected: "received error 400 (Bad Request): all shards failed",
+			expected: "400 (Bad Request): all shards failed",
 		},
 	}
 
