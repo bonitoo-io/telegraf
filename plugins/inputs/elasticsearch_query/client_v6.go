@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	elasticsearch6 "github.com/elastic/go-elasticsearch/v6"
 
@@ -13,10 +14,11 @@ import (
 )
 
 type clientV6 struct {
-	client        *elasticsearch6.Client
-	httpClient    *http.Client
-	log           telegraf.Logger
-	stopDiscovery func()
+	client          *elasticsearch6.Client
+	httpClient      *http.Client
+	log             telegraf.Logger
+	cancelDiscovery context.CancelFunc
+	discoveryWG     sync.WaitGroup
 }
 
 func newClientV6(cfg clientConfig) (client, error) {
@@ -32,18 +34,25 @@ func newClientV6(cfg clientConfig) (client, error) {
 	}
 
 	client := &clientV6{client: c, httpClient: cfg.httpClient, log: cfg.log}
-	if cfg.enableSniffer {
+	if cfg.enableSniffer && cfg.discoveryInterval > 0 {
 		// The v6 client exposes only DiscoverNodes(), so in-flight calls cannot be canceled.
-		client.stopDiscovery = startDiscovery(cfg.log, cfg.discoveryInterval, func(context.Context) error {
-			return c.DiscoverNodes()
-		})
+		ctx, cancel := context.WithCancel(context.Background())
+		client.cancelDiscovery = cancel
+		client.discoveryWG.Add(1)
+		go func() {
+			defer client.discoveryWG.Done()
+			startDiscovery(ctx, cfg.discoveryInterval, func(context.Context) error {
+				return c.DiscoverNodes()
+			}, cfg.log)
+		}()
 	}
 	return client, nil
 }
 
 func (c *clientV6) close() {
-	if c.stopDiscovery != nil {
-		c.stopDiscovery()
+	if c.cancelDiscovery != nil {
+		c.cancelDiscovery()
+		c.discoveryWG.Wait()
 	}
 	if c.httpClient != nil {
 		c.httpClient.CloseIdleConnections()

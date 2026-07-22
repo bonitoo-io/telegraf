@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Masterminds/semver/v3"
@@ -128,40 +127,23 @@ func (t roundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.client.Do(req)
 }
 
-// startDiscovery runs node discovery immediately and repeats it when the interval is positive.
-// The returned function stops the loop and waits for any active call to return.
-func startDiscovery(log telegraf.Logger, interval time.Duration, discover func(context.Context) error) func() {
-	ctx, cancel := context.WithCancel(context.Background())
+// startDiscovery runs node discovery immediately and then at the configured interval.
+func startDiscovery(ctx context.Context, interval time.Duration, discover func(context.Context) error, log telegraf.Logger) {
+	if err := discover(ctx); err != nil && ctx.Err() == nil {
+		log.Errorf("Discovering ElasticSearch nodes failed: %v", err)
+	}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		if err := discover(ctx); err != nil && ctx.Err() == nil {
-			log.Errorf("Discovering ElasticSearch nodes failed: %v", err)
-		}
-		if interval <= 0 {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := discover(ctx); err != nil && ctx.Err() == nil {
-					log.Errorf("Discovering ElasticSearch nodes failed: %v", err)
-				}
+		case <-ticker.C:
+			if err := discover(ctx); err != nil && ctx.Err() == nil {
+				log.Errorf("Discovering ElasticSearch nodes failed: %v", err)
 			}
 		}
-	}()
-
-	return func() {
-		cancel()
-		wg.Wait()
 	}
 }
 
