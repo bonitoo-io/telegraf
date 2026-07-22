@@ -94,9 +94,11 @@ func TestClientV5Sniffer(t *testing.T) {
 		Log:           logger,
 	}
 
-	c, err := plugin.newClient()
-	require.NoError(t, err)
-	defer c.close()
+	require.NoError(t, plugin.Init())
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Start(&acc))
+	defer plugin.Stop()
 
 	warnings := logger.Warnings()
 	require.Len(t, warnings, 1)

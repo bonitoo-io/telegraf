@@ -82,11 +82,11 @@ func (e *ElasticsearchQuery) Init() error {
 	return nil
 }
 
-func (e *ElasticsearchQuery) newClient() (client, error) {
+func (e *ElasticsearchQuery) Start(telegraf.Accumulator) error {
 	// Make sure the HTTP client exists
 	httpClient, err := e.HTTPClientConfig.CreateClient(context.Background(), e.Log)
 	if err != nil {
-		return nil, fmt.Errorf("creating HTTP client failed: %w", err)
+		return fmt.Errorf("creating HTTP client failed: %w", err)
 	}
 
 	cfg := clientConfig{
@@ -102,30 +102,26 @@ func (e *ElasticsearchQuery) newClient() (client, error) {
 	version, major, err := cfg.probeVersion(context.Background())
 	if err != nil {
 		httpClient.CloseIdleConnections()
-		return nil, err
+		return err
 	}
 
+	var c client
 	switch major {
 	case 5:
 		if cfg.enableSniffer {
 			e.Log.Warn("'enable_sniffer' is not supported for ElasticSearch 5.x and will be ignored")
 		}
-		return newClientV5(cfg)
+		c, err = newClientV5(cfg)
 	case 6:
-		return newClientV6(cfg)
+		c, err = newClientV6(cfg)
 	default:
 		httpClient.CloseIdleConnections()
-		return nil, fmt.Errorf("server version %q not supported (currently supported versions are 5.x and 6.x)", version)
+		return fmt.Errorf("server version %q not supported (currently supported versions are 5.x and 6.x)", version)
 	}
-}
-
-func (e *ElasticsearchQuery) Start(telegraf.Accumulator) error {
-	// Create a new ElasticSearch client
-	client, err := e.newClient()
 	if err != nil {
 		return err
 	}
-	e.client = client
+	e.client = c
 
 	// Setup the aggregations, this needs to be done in Start as it will require
 	// API calls to the ElasticSearch endpoint and can thus not happen in Init
