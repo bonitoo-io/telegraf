@@ -25,14 +25,6 @@ type clientConfig struct {
 	log               telegraf.Logger
 }
 
-type serverVersion struct {
-	Number string `json:"number"`
-}
-
-type serverInfo struct {
-	Version serverVersion `json:"version"`
-}
-
 func (cfg clientConfig) probeVersion(ctx context.Context) (string, uint64, error) {
 	// Use the v5 client only for the version-agnostic GET / probe.
 	probe, err := elasticsearch5.NewClient(elasticsearch5.Config{
@@ -66,15 +58,6 @@ func (cfg clientConfig) probeVersion(ctx context.Context) (string, uint64, error
 	}
 
 	return info.Version.Number, version.Major(), nil
-}
-
-type apiErrorDetails struct {
-	Type   string `json:"type"`
-	Reason string `json:"reason"`
-}
-
-type apiErrorResponse struct {
-	Error apiErrorDetails `json:"error"`
 }
 
 type apiError struct {
@@ -257,34 +240,6 @@ func (a *aggregation) buildRangeQuery(from, to time.Time) map[string]interface{}
 	return rangeQuery
 }
 
-type searchHits struct {
-	Total json.RawMessage `json:"total"`
-}
-
-type searchResponse struct {
-	Hits         searchHits                 `json:"hits"`
-	Aggregations map[string]json.RawMessage `json:"aggregations"`
-}
-
-type totalHits struct {
-	Value int64 `json:"value"`
-}
-
-func (r *searchResponse) totalHits() int64 {
-	var total int64
-	if err := json.Unmarshal(r.Hits.Total, &total); err == nil {
-		return total
-	}
-
-	// Elasticsearch 7 and later return hits.total as an object.
-	var result totalHits
-	if err := json.Unmarshal(r.Hits.Total, &result); err == nil {
-		return result.Value
-	}
-
-	return 0
-}
-
 func buildSearchBody(aggregation *aggregation, log telegraf.Logger) ([]byte, error) {
 	// buildQueries stores []queryData in this field before query execution.
 	// If the assertion fails, it indicates a programming error in this package.
@@ -338,12 +293,19 @@ func buildSearchBody(aggregation *aggregation, log telegraf.Logger) ([]byte, err
 	return data, nil
 }
 
-type aggregationValue struct {
-	Value *float64 `json:"value"`
-}
+func (r *searchResponse) totalHits() int64 {
+	var total int64
+	if err := json.Unmarshal(r.Hits.Total, &total); err == nil {
+		return total
+	}
 
-type aggregationBuckets struct {
-	Buckets []map[string]json.RawMessage `json:"buckets"`
+	// Elasticsearch 7 and later return hits.total as an object.
+	var result totalHits
+	if err := json.Unmarshal(r.Hits.Total, &result); err == nil {
+		return result.Value
+	}
+
+	return 0
 }
 
 type aggregationIterator struct {
