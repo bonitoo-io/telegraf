@@ -76,7 +76,7 @@ func (c *clientV6) getFieldMapping(ctx context.Context, index, field string) (ma
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decoding message body failed: %w", err)
 	}
 	return result, nil
 }
@@ -103,7 +103,7 @@ func (c *clientV6) query(ctx context.Context, aggregation *aggregation) (interfa
 
 	var result searchResponse
 	if err := json.NewDecoder(res.Body).Decode(&result); err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("decoding message body failed: %w", err)
 	}
 	if len(result.Aggregations) == 0 {
 		return nil, result.totalHits(), nil
