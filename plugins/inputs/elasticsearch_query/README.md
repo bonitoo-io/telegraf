@@ -9,6 +9,7 @@ particular field.
 > [!IMPORTANT]
 > This plugins supports Elasticsearch 5.x and 6.x but is known to break on 7.x
 > or higher.
+> Node discovery is not supported with Elasticsearch 5.x.
 
 ⭐ Telegraf v1.20.0
 🏷️ datastore

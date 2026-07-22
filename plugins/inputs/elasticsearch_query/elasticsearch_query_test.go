@@ -79,13 +79,28 @@ func TestCheckForError(t *testing.T) {
 }
 
 func TestClientV5Sniffer(t *testing.T) {
-	c, err := newClientV5(clientConfig{
-		enableSniffer: true,
-		httpClient:    &http.Client{},
-	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"version":{"number":"5.6.16"}}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
 
-	require.EqualError(t, err, "enable_sniffer is not supported by the official ElasticSearch v5 client")
-	require.Nil(t, c)
+	logger := &testutil.CaptureLogger{}
+	plugin := &ElasticsearchQuery{
+		URLs:          []string{server.URL},
+		EnableSniffer: true,
+		Log:           logger,
+	}
+
+	c, err := plugin.newClient()
+	require.NoError(t, err)
+	defer c.close()
+
+	warnings := logger.Warnings()
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "'enable_sniffer' is not supported")
 }
 
 func TestClientV6Sniffer(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -20,11 +19,6 @@ type clientV5 struct {
 }
 
 func newClientV5(cfg clientConfig) (client, error) {
-	if cfg.enableSniffer {
-		cfg.httpClient.CloseIdleConnections()
-		return nil, errors.New("enable_sniffer is not supported by the official ElasticSearch v5 client")
-	}
-
 	c, err := elasticsearch5.NewClient(elasticsearch5.Config{
 		Addresses: cfg.urls,
 		Username:  cfg.username,

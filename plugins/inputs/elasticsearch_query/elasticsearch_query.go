@@ -107,6 +107,9 @@ func (e *ElasticsearchQuery) newClient() (client, error) {
 
 	switch major {
 	case 5:
+		if cfg.enableSniffer {
+			e.Log.Warn("'enable_sniffer' is not supported for ElasticSearch 5.x and will be ignored")
+		}
 		return newClientV5(cfg)
 	case 6:
 		return newClientV6(cfg)
