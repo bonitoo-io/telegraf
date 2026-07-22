@@ -42,6 +42,11 @@ func TestCheckForError(t *testing.T) {
 		expected   string
 	}{
 		{
+			name:       "informational response",
+			statusCode: http.StatusContinue,
+			expected:   "received error 100 (Continue)",
+		},
+		{
 			name:       "type and reason",
 			statusCode: http.StatusNotFound,
 			body:       `{"error":{"type":"index_not_found_exception","reason":"no such index"}}`,

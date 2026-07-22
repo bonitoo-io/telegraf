@@ -96,7 +96,7 @@ func (e *apiError) Error() string {
 }
 
 func checkForError(statusCode int, body io.Reader) error {
-	if statusCode <= 299 {
+	if statusCode >= 200 && statusCode < 300 {
 		return nil
 	}
 
