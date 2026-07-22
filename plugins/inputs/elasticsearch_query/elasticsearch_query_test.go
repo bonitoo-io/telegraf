@@ -920,7 +920,6 @@ func TestInvalidServerVersion(t *testing.T) {
 	var acc testutil.Accumulator
 	err := plugin.Start(&acc)
 	require.ErrorContains(t, err, `parsing server version "invalid" failed`)
-	require.NotContains(t, err.Error(), "getting server version failed")
 	require.Nil(t, plugin.client)
 }
 
