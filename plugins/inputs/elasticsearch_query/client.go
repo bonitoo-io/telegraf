@@ -34,7 +34,7 @@ type serverInfo struct {
 	Version serverVersion `json:"version"`
 }
 
-func (cfg clientConfig) probeVersion(ctx context.Context) (string, int, error) {
+func (cfg clientConfig) probeVersion(ctx context.Context) (string, uint64, error) {
 	// Use the v5 client only for the version-agnostic GET / probe.
 	probe, err := elasticsearch5.NewClient(elasticsearch5.Config{
 		Addresses: cfg.urls,
@@ -66,7 +66,7 @@ func (cfg clientConfig) probeVersion(ctx context.Context) (string, int, error) {
 		return "", 0, fmt.Errorf("parsing server version %q failed: %w", info.Version.Number, err)
 	}
 
-	return info.Version.Number, int(version.Major()), nil
+	return info.Version.Number, version.Major(), nil
 }
 
 type apiErrorDetails struct {
