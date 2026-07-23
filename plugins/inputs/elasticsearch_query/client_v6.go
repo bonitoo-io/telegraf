@@ -82,7 +82,7 @@ func (c *clientV6) getFieldMapping(ctx context.Context, index, field string) (ma
 }
 
 func (c *clientV6) query(ctx context.Context, aggregation *aggregation) (interface{}, int64, error) {
-	data, err := buildSearchBody(aggregation, c.log)
+	data, err := aggregation.buildSearchBody(c.log)
 	if err != nil {
 		return nil, 0, err
 	}

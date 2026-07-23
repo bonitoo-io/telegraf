@@ -184,7 +184,7 @@ func (e *ElasticsearchQuery) initAggregation(ctx context.Context, agg *aggregati
 		}
 	}
 
-	if err := buildQueries(agg); err != nil {
+	if err := agg.buildQueries(); err != nil {
 		return fmt.Errorf("building aggregation query failed: %w", err)
 	}
 

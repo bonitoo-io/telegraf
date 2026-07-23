@@ -147,11 +147,11 @@ func (q *queryData) addSubAggregation(name string, subAggregation map[string]int
 	aggs[name] = subAggregation
 }
 
-func buildQueries(aggregation *aggregation) error {
+func (a *aggregation) buildQueries() error {
 	// Create one aggregation per metric field found or function defined for
 	// numeric fields
-	queries := make([]queryData, 0, len(aggregation.mapMetricFields)+len(aggregation.Tags))
-	for k, v := range aggregation.mapMetricFields {
+	queries := make([]queryData, 0, len(a.mapMetricFields)+len(a.Tags))
+	for k, v := range a.mapMetricFields {
 		switch v {
 		case "long", "float", "integer", "short", "double", "scaled_float":
 		default:
@@ -159,21 +159,21 @@ func buildQueries(aggregation *aggregation) error {
 		}
 
 		var agg map[string]interface{}
-		switch aggregation.MetricFunction {
+		switch a.MetricFunction {
 		case "avg", "sum", "min", "max":
 			agg = map[string]interface{}{
-				aggregation.MetricFunction: map[string]interface{}{
+				a.MetricFunction: map[string]interface{}{
 					"field": k,
 				},
 			}
 		default:
-			return fmt.Errorf("aggregation function %q not supported", aggregation.MetricFunction)
+			return fmt.Errorf("aggregation function %q not supported", a.MetricFunction)
 		}
 
 		query := queryData{
-			measurement: aggregation.MeasurementName,
-			function:    aggregation.MetricFunction,
-			name:        strings.ReplaceAll(k, ".", "_") + "_" + aggregation.MetricFunction,
+			measurement: a.MeasurementName,
+			function:    a.MetricFunction,
+			name:        strings.ReplaceAll(k, ".", "_") + "_" + a.MetricFunction,
 			isParent:    true,
 			aggregation: agg,
 		}
@@ -181,16 +181,16 @@ func buildQueries(aggregation *aggregation) error {
 	}
 
 	// Create a terms aggregation per tag
-	for _, term := range aggregation.Tags {
+	for _, term := range a.Tags {
 		terms := map[string]interface{}{
 			"field": term,
 			"size":  1000,
 		}
-		if aggregation.IncludeMissingTag && aggregation.MissingTagValue != "" {
-			terms["missing"] = aggregation.MissingTagValue
+		if a.IncludeMissingTag && a.MissingTagValue != "" {
+			terms["missing"] = a.MissingTagValue
 		}
 		query := queryData{
-			measurement: aggregation.MeasurementName,
+			measurement: a.MeasurementName,
 			function:    "terms",
 			name:        strings.ReplaceAll(term, ".", "_"),
 			isParent:    true,
@@ -211,7 +211,7 @@ func buildQueries(aggregation *aggregation) error {
 
 		queries = append(queries, query)
 	}
-	aggregation.queries = queries
+	a.queries = queries
 
 	// Prepare measurement mapping to organize the aggregation query data
 	// by measurement
@@ -224,7 +224,7 @@ func buildQueries(aggregation *aggregation) error {
 		}
 		nameFunctions[query.name] = query.function
 	}
-	aggregation.measurements = measurements
+	a.measurements = measurements
 
 	return nil
 }
@@ -240,25 +240,25 @@ func (a *aggregation) buildRangeQuery(from, to time.Time) map[string]interface{}
 	return rangeQuery
 }
 
-func buildSearchBody(aggregation *aggregation, log telegraf.Logger) ([]byte, error) {
+func (a *aggregation) buildSearchBody(log telegraf.Logger) ([]byte, error) {
 	// buildQueries stores []queryData in this field before query execution.
 	// If the assertion fails, it indicates a programming error in this package.
-	queries := aggregation.queries.([]queryData)
+	queries := a.queries.([]queryData)
 
 	now := time.Now().UTC()
-	from := now.Add(-time.Duration(aggregation.QueryPeriod))
+	from := now.Add(-time.Duration(a.QueryPeriod))
 
 	query := map[string]interface{}{
 		"bool": map[string]interface{}{
 			"filter": []interface{}{
 				map[string]interface{}{
 					"query_string": map[string]interface{}{
-						"query": aggregation.FilterQuery,
+						"query": a.FilterQuery,
 					},
 				},
 				map[string]interface{}{
 					"range": map[string]interface{}{
-						aggregation.DateField: aggregation.buildRangeQuery(from, now),
+						a.DateField: a.buildRangeQuery(from, now),
 					},
 				},
 			},
